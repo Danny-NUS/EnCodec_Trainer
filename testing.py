@@ -22,6 +22,8 @@ import io
 import typing as tp
 import math
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 def check_clipping(wav):
     mx = wav.abs().max()
     limit = 0.99
@@ -52,11 +54,11 @@ device = 'cpu' # cpu, cuda, ipu, xpu, mkldnn, opengl, opencl, ideep, hip, ve, fp
 # torch.backends.cudnn.allow_tf32 = False
 
 
-song = Path('audio/song_input.wav')
-output = Path('audio/output_song.ecdc')
-outputw = Path('audio/output_song.wav')
+song = Path('audio/000002.wav')
+output = Path('audio/output_000002.ecdc')
+outputw = Path('audio/output_000002.wav')
 model_name = 'my_encodec_24khz' # 'encodec_24khz'
-model = MODELS[model_name](checkpoint_name='saves/batch29_cut100000_epoch10.pth').to(device)
+model = MODELS[model_name]("/data2/junchuan/EnCodec_Finetune/news_LibriTTS/batch5_cut50000_epoch4.pth").to(device)
 
 model.train()
 wav, sr = torchaudio.load(song)

@@ -12,7 +12,7 @@ EPSILON = 1e-8
 BATCH_SIZE = 5 #5#55
 TENSOR_CUT = 50000 #10000
 MAX_EPOCH = 10000 # Just set this to a very big number and manually stop it
-SAVE_FOLDER = f'saves/new7/'
+SAVE_FOLDER = f'/data2/junchuan/EnCodec_Finetune/news_LibriTTS/'
 SAVE_LOCATION = f'{SAVE_FOLDER}batch{BATCH_SIZE}_cut{TENSOR_CUT}_' # appends epoch{epoch}.pth
 
 if not os.path.exists(SAVE_FOLDER):
@@ -65,13 +65,12 @@ def collate_fn(batch):
 
 
 def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=100000, batch_size=8):
-    csv_path = 'datasets/e-gmd-v1.0.0/fileTRAIN.csv'
-    data_path = 'datasets/e-gmd-v1.0.0'
+    data_path = '/home/junchuan/EnCodec_Trainer/LibriTTS_meta.json'
 
     if fixed_length > 0:
-        trainset = data.CustomAudioDataset(csv_path, data_path, tensor_cut=tensor_cut, fixed_length=fixed_length)
+        trainset = data.CustomAudioDataset(data_path, tensor_cut=tensor_cut, fixed_length=fixed_length)
     else:
-        trainset = data.CustomAudioDataset(csv_path, data_path, tensor_cut=tensor_cut)
+        trainset = data.CustomAudioDataset(data_path, tensor_cut=tensor_cut)
     
 
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn,)
