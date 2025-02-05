@@ -203,6 +203,8 @@ class EncodecModel(nn.Module):
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, int, list[tuple[torch.Tensor, torch.Tensor]]]:
         l2Loss = torch.nn.MSELoss(reduction='mean')
         frames = self.encode(x)
+        import pdb
+        pdb.set_trace()
         loss_enc = torch.tensor([0.0], device=x.device, requires_grad=True)
         codes = []
         is_training = self.training

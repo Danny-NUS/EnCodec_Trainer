@@ -145,6 +145,12 @@ class SEANetEncoder(nn.Module):
         self.model = nn.Sequential(*model)
 
     def forward(self, x):
+        y = x
+        
+        for layer in self.model:
+            y = layer(y)
+            print(f"{layer.__class__.__name__}: {y.shape}")
+
         return self.model(x)
 
 

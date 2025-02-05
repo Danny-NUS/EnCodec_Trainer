@@ -10,7 +10,7 @@ from audio_to_mel import Audio2Mel
 
 EPSILON = 1e-8
 BATCH_SIZE = 5 #5#55
-TENSOR_CUT = 50000 #10000
+TENSOR_CUT = 48000 #10000
 MAX_EPOCH = 10000 # Just set this to a very big number and manually stop it
 SAVE_FOLDER = f'/data2/junchuan/EnCodec_Finetune/news_LibriTTS/'
 SAVE_LOCATION = f'{SAVE_FOLDER}batch{BATCH_SIZE}_cut{TENSOR_CUT}_' # appends epoch{epoch}.pth
@@ -45,23 +45,31 @@ def disc_loss(logits_real, logits_fake):
     lossd = lossd / len(logits_real)
     return lossd
 
-def pad_sequence(batch):
+def pad_sequence(batch, max_len):
     # Make all tensor in a batch the same length by padding with zeros
     batch = [item.permute(1, 0) for item in batch]
     batch = torch.nn.utils.rnn.pad_sequence(batch, batch_first=True, padding_value=0.)
+    if batch.shape[1] < max_len:
+        batch = torch.cat([batch, torch.zeros(max_len - batch.shape[0], *batch.shape[1:], dtype=batch.dtype)])
     batch = batch.permute(0, 2, 1)
     return batch
 
 
 def collate_fn(batch):
-    tensors = []
+    wavs = []
+    f0s = []
+    uvs = []
 
-    for waveform, _ in batch:
-        tensors += [waveform]
+    for waveform, _, f0, uv in batch:
+        wavs += [waveform]
+        f0s += [f0]
+        uvs += [uv]
 
     # Group the list of tensors into a batched tensor
-    tensors = pad_sequence(tensors)
-    return tensors
+    wavs = pad_sequence(wavs, TENSOR_CUT)
+    f0s = pad_sequence(f0s, int(TENSOR_CUT/40))
+    uvs = pad_sequence(uvs, int(TENSOR_CUT/40))
+    return wavs, f0s, uvs
 
 
 def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=100000, batch_size=8):
@@ -103,7 +111,7 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
         last_loss = 0
         train_d = False
         print('----------------------------------------Epoch: {}----------------------------------------'.format(epoch))
-        for batch_idx, input_wav in enumerate(trainloader):
+        for batch_idx, (input_wav, f0, uv) in enumerate(trainloader):
             train_d = not train_d
             input_wav = input_wav.cuda()
             optimizer.zero_grad()
