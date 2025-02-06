@@ -144,14 +144,22 @@ class SEANetEncoder(nn.Module):
 
         self.model = nn.Sequential(*model)
 
-    def forward(self, x):
+    def forward(self, x, segment):
         y = x
-        
-        for layer in self.model:
-            y = layer(y)
-            print(f"{layer.__class__.__name__}: {y.shape}")
-
-        return self.model(x)
+        if segment == "front":
+            for i, layer in enumerate(self.model.children()):
+                if i <= 11:
+                    y = layer(y)
+                    # print(f"{i}: {y.shape}")
+            return y
+        elif segment == "back":
+            for i, layer in enumerate(self.model.children()):
+                if i > 11:
+                    y = layer(y)
+                    print(f"{i}: {y.shape}")
+            return y
+        else:
+            return self.model(x)
 
 
 class SEANetDecoder(nn.Module):

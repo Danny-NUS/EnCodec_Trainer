@@ -101,6 +101,9 @@ class EncodecModel(nn.Module):
         self.channels = channels
         self.normalize = normalize
         self.segment = segment
+        self.f0_embedding = nn.Embedding(num_embeddings=256, embedding_dim=256)
+        self.uv_embedding = nn.Embedding(num_embeddings=2, embedding_dim=256)
+        self.prosody = segment/40
         self.overlap = overlap
         self.frame_rate = math.ceil(self.sample_rate / np.prod(self.encoder.ratios))
         self.name = name
@@ -121,35 +124,92 @@ class EncodecModel(nn.Module):
         if segment_length is None:
             return None
         return max(1, int((1 - self.overlap) * segment_length))
+    
+    @property
+    def prosody_length(self) -> tp.Optional[int]:
+        if self.prosody is None:
+            return None
+        return int(self.prosody * self.sample_rate)
 
-    def encode(self, x: torch.Tensor) -> tp.List[EncodedFrame]:
-        """Given a tensor `x`, returns a list of frames containing
+    @property
+    def prosody_stride(self) -> tp.Optional[int]:
+        prosody_length = self.prosody_length
+        if prosody_length is None:
+            return None
+        return max(1, int((1 - self.overlap) * prosody_length))
+
+    def encode(self, x: torch.Tensor, f0: torch.Tensor, uv: torch.Tensor) -> tp.List[EncodedFrame]:
+        """Given a tuple of tensor `x`, returns a list of frames containing
         the discrete encoded codes for `x`, along with rescaling factors
         for each segment, when `self.normalize` is True.
 
         Each frames is a tuple `(codebook, scale)`, with `codebook` of
         shape `[B, K, T]`, with `K` the number of codebooks.
         """
+
+        # assert audio input
         assert x.dim() == 3
-        _, channels, length = x.shape
+        _, channels, x_length = x.shape
         assert 0 < channels <= 2
+
+        # assert f0 and uv input
+        assert f0.dim() == 3, uv.dim() == 3
+        _, channels, pro_length = f0.shape
+        assert 0 < channels <= 2
+        _, channels, uv_length = uv.shape
+        assert 0 < channels <= 2
+
         segment_length = self.segment_length
         if segment_length is None:
-            segment_length = length
-            stride = length
+            segment_length = x_length
+            stride = x_length
         else:
             stride = self.segment_stride  # type: ignore
             assert stride is not None
+        
+
+        prosody_length = self.prosody_length
+        if prosody_length is None:
+            prosody_length = pro_length
+            prosody_stride = pro_length
+        else:
+            prosody_stride = self.prosody_stride  # type: ignore
+            assert prosody_stride is not None
+        
+        encoded_f0: tp.List[EncodedFrame] = []
+        # print("length:", length, "stride:", stride)
+        for offset in range(0, pro_length, prosody_stride):
+            # print("start:", offset, "end:", offset + segment_length)
+            frame = f0[:, :, offset: offset + prosody_length]
+            encoded_f0.append(self._encode_prosody(frame, self.f0_embedding))
+        encoded_uv: tp.List[EncodedFrame] = []
+        for offset in range(0, uv_length, prosody_stride):
+            # print("start:", offset, "end:", offset + segment_length)
+            frame = uv[:, :, offset: offset + prosody_length].to(torch.int32)
+            encoded_uv.append(self._encode_prosody(frame, self.uv_embedding))
 
         encoded_frames: tp.List[EncodedFrame] = []
         # print("length:", length, "stride:", stride)
-        for offset in range(0, length, stride):
+        for idx, offset in enumerate(range(0, x_length, stride)):
             # print("start:", offset, "end:", offset + segment_length)
             frame = x[:, :, offset: offset + segment_length]
-            encoded_frames.append(self._encode_frame(frame))
-        return encoded_frames
+            encoded_frames.append(self._encode_frame(frame, encoded_f0[idx], encoded_uv[idx]))
+        
+        import pdb
+        pdb.set_trace()
 
-    def _encode_frame(self, x: torch.Tensor) -> EncodedFrame:
+        return encoded_frames
+    
+    def _encode_prosody(self, x: torch.Tensor, emb_layer: nn.Embedding) -> EncodedFrame:
+        length = x.shape[-1]
+        duration = length / self.sample_rate
+        assert self.prosody is None or duration <= 1e-5 + self.prosody
+        emb_layer = emb_layer.to(x.device)
+        x = emb_layer(x)
+        x = x.permute(0, 3, 2, 1).squeeze(3)
+        return x
+
+    def _encode_frame(self, x: torch.Tensor, f0_emb: torch.Tensor, uv_emb: torch.Tensor) -> EncodedFrame:
         length = x.shape[-1]
         duration = length / self.sample_rate
         assert self.segment is None or duration <= 1e-5 + self.segment
@@ -162,7 +222,14 @@ class EncodecModel(nn.Module):
             scale = scale.view(-1, 1)
         else:
             scale = None
-        emb = self.encoder(x)
+
+        # first several layers
+        emb = self.encoder(x, "front")
+
+        # any problem with scale?
+        emb = emb + f0_emb.to(emb.device) + uv_emb.to(emb.device)
+        # the rest of the layers
+        emb = self.encoder(emb, "back")
 
         if self.training:# or True:
             return emb, scale
@@ -200,11 +267,9 @@ class EncodecModel(nn.Module):
             out = out * scale.view(-1, 1, 1)
         return out
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, int, list[tuple[torch.Tensor, torch.Tensor]]]:
+    def forward(self, x: torch.Tensor, f0: torch.Tensor, uv: torch.Tensor) -> tuple[torch.Tensor, int, list[tuple[torch.Tensor, torch.Tensor]]]:
         l2Loss = torch.nn.MSELoss(reduction='mean')
-        frames = self.encode(x)
-        import pdb
-        pdb.set_trace()
+        frames = self.encode(x, f0, uv)
         loss_enc = torch.tensor([0.0], device=x.device, requires_grad=True)
         codes = []
         is_training = self.training
