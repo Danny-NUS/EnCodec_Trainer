@@ -19,13 +19,17 @@ import math
 from scipy.signal import resample_poly
 import torchaudio
 import torchaudio.transforms as T
-
+import torch.nn.functional as F
         
 def extractor_pyworld(x, sr, frame_shift):
     x = x.squeeze(0).cpu().numpy().astype(np.float64)
-    f0, t = pw.dio(x, sr, f0_floor=f0_floor, f0_ceil=f0_ceil, frame_period=frame_shift)
+    # try:
+        # f0, t = pw.dio(x, sr, f0_floor=f0_floor, f0_ceil=f0_ceil, frame_period=frame_shift)
+    f0, t = pw.dio(x, sr, frame_period=frame_shift)
     f0 = pw.stonemask(x, f0, t, sr)
-
+    # except Exception as e:
+    # print(f0.min(), f0.max())
+    # print(x.min(), x.max())
     uv = np.zeros(f0.shape).astype('float32')
     uv[np.where(f0 > 0)] = 1
 
@@ -96,14 +100,19 @@ class CustomAudioDataset(torch.utils.data.Dataset):
         self.transform = T.Resample(orig_freq=sample_rate, new_freq=24000)
         if sample_rate != 24000:
             waveform = self.transform(waveform)
-
-        f0, uv = extractor_pyworld(waveform, 24000, 40/24000 * 1000)
-
+        # try:
+        #     f0, uv = extractor_pyworld(waveform, 24000, 40/24000 * 1000)
+        # except Exception as e:
+        #     print(waveform.min(), waveform.max())
+        #     print(f0.min(), f0.max())
         if self.tensor_cut > 0:
             if waveform.size()[1] > self.tensor_cut:
                 start = random.randint(0, waveform.size()[1]-self.tensor_cut-1)
                 waveform = waveform[:, start:start+self.tensor_cut]
-                f0, uv = extractor_pyworld(waveform, 24000, 40/24000 * 1000)
-        
+            else:
+                pad_size = self.tensor_cut - waveform.size(1)
+                waveform = F.pad(waveform, (0, pad_size))
+        f0, uv = extractor_pyworld(waveform, 24000, 40/24000 * 1000)
+            
         return waveform, sample_rate, torch.tensor(f0[:-1]).to(waveform.device).unsqueeze(0), torch.tensor(uv[:-1]).to(waveform.device).unsqueeze(0)
 

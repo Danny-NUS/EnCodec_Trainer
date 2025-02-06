@@ -18,7 +18,7 @@ from torch import nn, Tensor
 import quantization as qt
 import modules as m
 from utils import _check_checksum, _linear_overlap_add, _get_checkpoint_url
-
+from modules.classifier import ReversalClassifier
 
 ROOT_URL = 'https://dl.fbaipublicfiles.com/encodec/v0/'
 
@@ -105,6 +105,8 @@ class EncodecModel(nn.Module):
         self.uv_embedding = nn.Embedding(num_embeddings=2, embedding_dim=256)
         self.prosody = segment/40
         self.overlap = overlap
+        self.f0_classifier = ReversalClassifier(input_dim=256, hidden_dim=384, output_dim=256)
+        self.uv_classifier = ReversalClassifier(input_dim=256, hidden_dim=384, output_dim=2)
         self.frame_rate = math.ceil(self.sample_rate / np.prod(self.encoder.ratios))
         self.name = name
         self.bits_per_codebook = int(math.log2(self.quantizer.bins))
@@ -193,21 +195,21 @@ class EncodecModel(nn.Module):
         for idx, offset in enumerate(range(0, x_length, stride)):
             # print("start:", offset, "end:", offset + segment_length)
             frame = x[:, :, offset: offset + segment_length]
-            encoded_frames.append(self._encode_frame(frame, encoded_f0[idx], encoded_uv[idx]))
+            encoded_frames.append(self._encode_frame(frame, encoded_f0[idx][1], encoded_uv[idx][1]))
+            
+        # import pdb
+        # pdb.set_trace()
         
-        import pdb
-        pdb.set_trace()
-
-        return encoded_frames
+        return encoded_frames, [f0[0] for f0 in encoded_f0], [uv[0] for uv in encoded_uv]
     
     def _encode_prosody(self, x: torch.Tensor, emb_layer: nn.Embedding) -> EncodedFrame:
         length = x.shape[-1]
         duration = length / self.sample_rate
         assert self.prosody is None or duration <= 1e-5 + self.prosody
         emb_layer = emb_layer.to(x.device)
-        x = emb_layer(x)
-        x = x.permute(0, 3, 2, 1).squeeze(3)
-        return x
+        e = emb_layer(x)
+        e = e.permute(0, 3, 2, 1).squeeze(3)
+        return x, e
 
     def _encode_frame(self, x: torch.Tensor, f0_emb: torch.Tensor, uv_emb: torch.Tensor) -> EncodedFrame:
         length = x.shape[-1]
@@ -224,7 +226,11 @@ class EncodecModel(nn.Module):
             scale = None
 
         # first several layers
-        emb = self.encoder(x, "front")
+        emb = self.encoder(x, "front") # torch.Size([5, 256, 600])
+
+        # classifier
+        pred_f0 = self.f0_classifier(emb.transpose(1, 2)) # torch.Size([5, 600, 256])
+        pred_uv = self.uv_classifier(emb.transpose(1, 2)) # torch.Size([5, 600, 2])
 
         # any problem with scale?
         emb = emb + f0_emb.to(emb.device) + uv_emb.to(emb.device)
@@ -232,7 +238,7 @@ class EncodecModel(nn.Module):
         emb = self.encoder(emb, "back")
 
         if self.training:# or True:
-            return emb, scale
+            return emb, scale, pred_f0, pred_uv
 
         codes = self.quantizer.encode(emb, self.frame_rate, self.bandwidth)
         codes = codes.transpose(0, 1)
@@ -269,17 +275,19 @@ class EncodecModel(nn.Module):
 
     def forward(self, x: torch.Tensor, f0: torch.Tensor, uv: torch.Tensor) -> tuple[torch.Tensor, int, list[tuple[torch.Tensor, torch.Tensor]]]:
         l2Loss = torch.nn.MSELoss(reduction='mean')
-        frames = self.encode(x, f0, uv)
+        frames, encoded_f0, encoded_uv = self.encode(x, f0, uv)
         loss_enc = torch.tensor([0.0], device=x.device, requires_grad=True)
         codes = []
         is_training = self.training
         self.train(self.train_quantization)
-        for emb, scale in frames:
+        for i, (emb, scale, pred_f0, pred_uv) in enumerate(frames):
             qv = self.quantizer.forward(emb, self.sample_rate, self.bandwidth)
-            loss_enc = loss_enc + qv.penalty + l2Loss(qv.quantized, emb) ** 2
+            loss_f0 = self.f0_classifier.loss(pred_f0, encoded_f0[i])
+            loss_uv = self.uv_classifier.loss(pred_uv, encoded_uv[i])
+            loss_enc = loss_enc + qv.penalty + l2Loss(qv.quantized, emb) ** 2 + loss_f0 + loss_uv
             codes.append((qv.quantized, scale))
         self.train(is_training)
-        return self.decode(codes)[:, :, :x.shape[-1]], loss_enc, frames
+        return self.decode(codes)[:, :, :x.shape[-1]], loss_enc, frames, loss_f0, loss_uv
 
     def set_target_bandwidth(self, bandwidth: float):
         if bandwidth not in self.target_bandwidths:
@@ -429,5 +437,5 @@ def test():
         assert wav.shape == wav_dec.shape, (wav.shape, wav_dec.shape)
 
 
-if __name__ == '__main__':
-    test()
+# if __name__ == '__main__':
+#     test()

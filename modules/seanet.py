@@ -156,7 +156,7 @@ class SEANetEncoder(nn.Module):
             for i, layer in enumerate(self.model.children()):
                 if i > 11:
                     y = layer(y)
-                    print(f"{i}: {y.shape}")
+                    # print(f"{i}: {y.shape}")
             return y
         else:
             return self.model(x)
@@ -267,5 +267,5 @@ def test():
     assert y.shape == x.shape, (x.shape, y.shape)
 
 
-if __name__ == '__main__':
-    test()
+# if __name__ == '__main__':
+#     test()

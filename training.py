@@ -12,7 +12,7 @@ EPSILON = 1e-8
 BATCH_SIZE = 5 #5#55
 TENSOR_CUT = 48000 #10000
 MAX_EPOCH = 10000 # Just set this to a very big number and manually stop it
-SAVE_FOLDER = f'/data2/junchuan/EnCodec_Finetune/news_LibriTTS/'
+SAVE_FOLDER = f'/data2/xintong/EnCodec_Finetune/news_LibriTTS/'
 SAVE_LOCATION = f'{SAVE_FOLDER}batch{BATCH_SIZE}_cut{TENSOR_CUT}_' # appends epoch{epoch}.pth
 
 if not os.path.exists(SAVE_FOLDER):
@@ -73,7 +73,7 @@ def collate_fn(batch):
 
 
 def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=100000, batch_size=8):
-    data_path = '/home/junchuan/EnCodec_Trainer/LibriTTS_meta.json'
+    data_path = 'LibriTTS_meta.json'
 
     if fixed_length > 0:
         trainset = data.CustomAudioDataset(data_path, tensor_cut=tensor_cut, fixed_length=fixed_length)
@@ -114,15 +114,17 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
         for batch_idx, (input_wav, f0, uv) in enumerate(trainloader):
             train_d = not train_d
             input_wav = input_wav.cuda()
+            f0 = f0.cuda().long()
+            uv = uv.cuda().long()
             optimizer.zero_grad()
             model.zero_grad()
             optimizer_disc.zero_grad()
             disc.zero_grad()
-            output, loss_enc, _ = model(input_wav, f0, uv)
+            output, loss_enc, _, loss_f0, loss_uv = model(input_wav, f0, uv)
 
             logits_real, fmap_real = disc(input_wav)
             if train_d:
-                logits_fake, _ = disc(model(input_wav)[0].detach())
+                logits_fake, _ = disc(model(input_wav, f0, uv)[0].detach())
                 loss = disc_loss(logits_real, logits_fake)
                 if loss > last_loss/2:
                     loss.backward()
@@ -138,7 +140,7 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
 
             if batch_idx % log_interval == 0:
                 print(torch.cuda.mem_get_info())
-                print(f"Train Epoch: {epoch} [{batch_idx * len(input_wav)}/{len(trainloader.dataset)} ({100. * batch_idx / len(trainloader):.0f}%)]")
+                print(f"Train Epoch: {epoch} [{batch_idx * len(input_wav)}/{len(trainloader.dataset)} ({100. * batch_idx / len(trainloader):.0f}%)], loss_enc: {loss_enc.item()}, loss {loss.item()} loss_f0 {loss_f0.item()}, loss_uv {loss_uv.item()}")
 
 
     def adjust_learning_rate(optimizer, epoch):

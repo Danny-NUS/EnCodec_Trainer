@@ -1,0 +1,27 @@
+/home/xintong/miniconda3/envs/gradtts/lib/python3.10/site-packages/torch/functional.py:632: UserWarning: stft will soon require the return_complex parameter be given for real inputs, and will further require that return_complex=True in a future PyTorch release. (Triggered internally at ../aten/src/ATen/native/SpectralOps.cpp:801.)
+  return _VF.stft(input, n_fft, hop_length, win_length, window,  # type: ignore[attr-defined]
+----------------------------------------Epoch: 1----------------------------------------
+(2935357440, 23710007296)
+Train Epoch: 1 [0/33236 (0%)], loss_enc: 20.57805824279785, loss 8.942790031433105 loss_f0 5.54847526550293, loss_uv 0.7398098111152649
+Traceback (most recent call last):
+  File "/home/xintong/EnCodec_Trainer/training.py", line 161, in <module>
+    training(max_epoch=MAX_EPOCH, log_interval=100, fixed_length=0, batch_size=BATCH_SIZE, tensor_cut=TENSOR_CUT)
+  File "/home/xintong/EnCodec_Trainer/training.py", line 154, in training
+    train(epoch)
+  File "/home/xintong/EnCodec_Trainer/training.py", line 114, in train
+    for batch_idx, (input_wav, f0, uv) in enumerate(trainloader):
+  File "/home/xintong/miniconda3/envs/gradtts/lib/python3.10/site-packages/torch/utils/data/dataloader.py", line 628, in __next__
+    data = self._next_data()
+  File "/home/xintong/miniconda3/envs/gradtts/lib/python3.10/site-packages/torch/utils/data/dataloader.py", line 671, in _next_data
+    data = self._dataset_fetcher.fetch(index)  # may raise StopIteration
+  File "/home/xintong/miniconda3/envs/gradtts/lib/python3.10/site-packages/torch/utils/data/_utils/fetch.py", line 58, in fetch
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+  File "/home/xintong/miniconda3/envs/gradtts/lib/python3.10/site-packages/torch/utils/data/_utils/fetch.py", line 58, in <listcomp>
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+  File "/home/xintong/EnCodec_Trainer/customAudioDataset.py", line 115, in __getitem__
+    f0, uv = extractor_pyworld(waveform, 24000, 40/24000 * 1000)
+  File "/home/xintong/EnCodec_Trainer/customAudioDataset.py", line 37, in extractor_pyworld
+    normalized_values = (non_zero_values - non_zero_values.min()) / (non_zero_values.max() - non_zero_values.min())
+  File "/home/xintong/miniconda3/envs/gradtts/lib/python3.10/site-packages/numpy/core/_methods.py", line 45, in _amin
+    return umr_minimum(a, axis, None, out, keepdims, initial, where)
+ValueError: zero-size array to reduction operation minimum which has no identity
