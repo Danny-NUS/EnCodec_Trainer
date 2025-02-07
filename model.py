@@ -86,10 +86,12 @@ class EncodecModel(nn.Module):
                  target_bandwidths: tp.List[float],
                  sample_rate: int,
                  channels: int,
+                 checkpoint_path: str = "/data2/junchuan/EnCodec_Finetune/news_LibriTTS/batch5_cut50000_epoch90.pth",
                  normalize: bool = False,
                  segment: tp.Optional[float] = None,
                  overlap: float = 0.01,
                  name: str = 'unset',
+                 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
                  train_quantization: bool = False):
         super().__init__()
         self.bandwidth: tp.Optional[float] = None
@@ -109,6 +111,16 @@ class EncodecModel(nn.Module):
         self.uv_classifier = ReversalClassifier(input_dim=256, hidden_dim=384, output_dim=2)
         self.frame_rate = math.ceil(self.sample_rate / np.prod(self.encoder.ratios))
         self.name = name
+        
+        # self.checkpoint_path = checkpoint_path
+        # self.checkpoint = torch.load(self.checkpoint_path, map_location=device)
+        # encoder_state_dict = {k.replace("encoder.", ""): v for k, v in self.checkpoint.items() if k.startswith("encoder.")}
+        # decoder_state_dict = {k.replace("decoder.", ""): v for k, v in self.checkpoint.items() if k.startswith("decoder.")}
+        # quantizer_state_dict = {k.replace("quantizer.", ""): v for k, v in self.checkpoint.items() if k.startswith("quantizer.")}
+        # self.encoder.load_state_dict(encoder_state_dict)
+        # self.decoder.load_state_dict(decoder_state_dict)
+        # self.quantizer.load_state_dict(quantizer_state_dict)
+        
         self.bits_per_codebook = int(math.log2(self.quantizer.bins))
         self.train_quantization = train_quantization
         assert 2 ** self.bits_per_codebook == self.quantizer.bins, \
@@ -169,7 +181,6 @@ class EncodecModel(nn.Module):
             stride = self.segment_stride  # type: ignore
             assert stride is not None
         
-
         prosody_length = self.prosody_length
         if prosody_length is None:
             prosody_length = pro_length
@@ -268,26 +279,41 @@ class EncodecModel(nn.Module):
             emb = self.quantizer.decode(codes)
         else:
             emb = codes
+      
         out = self.decoder(emb)
         if scale is not None:
             out = out * scale.view(-1, 1, 1)
         return out
 
-    def forward(self, x: torch.Tensor, f0: torch.Tensor, uv: torch.Tensor) -> tuple[torch.Tensor, int, list[tuple[torch.Tensor, torch.Tensor]]]:
+    def forward(self, x: torch.Tensor, f0: torch.Tensor, uv: torch.Tensor, train_stage: str) -> tuple[torch.Tensor, int, list[tuple[torch.Tensor, torch.Tensor]]]:
         l2Loss = torch.nn.MSELoss(reduction='mean')
         frames, encoded_f0, encoded_uv = self.encode(x, f0, uv)
         loss_enc = torch.tensor([0.0], device=x.device, requires_grad=True)
         codes = []
-        is_training = self.training
-        self.train(self.train_quantization)
-        for i, (emb, scale, pred_f0, pred_uv) in enumerate(frames):
-            qv = self.quantizer.forward(emb, self.sample_rate, self.bandwidth)
-            loss_f0 = self.f0_classifier.loss(pred_f0, encoded_f0[i])
-            loss_uv = self.uv_classifier.loss(pred_uv, encoded_uv[i])
-            loss_enc = loss_enc + qv.penalty + l2Loss(qv.quantized, emb) ** 2 + loss_f0 + loss_uv
-            codes.append((qv.quantized, scale))
-        self.train(is_training)
-        return self.decode(codes)[:, :, :x.shape[-1]], loss_enc, frames, loss_f0, loss_uv
+
+        loss_f0_sum = 0
+        loss_uv_sum = 0
+        if train_stage == "encoder":
+            is_training = self.training
+            for i, (emb, scale, pred_f0, pred_uv) in enumerate(frames):
+                qv = self.quantizer.forward(emb, self.sample_rate, self.bandwidth)
+                loss_f0 = self.f0_classifier.loss(pred_f0, encoded_f0[i])
+                loss_uv = self.uv_classifier.loss(pred_uv, encoded_uv[i])
+                loss_f0_sum += loss_f0
+                loss_uv_sum += loss_uv
+                self.train(is_training)
+            return loss_f0_sum, loss_uv_sum
+        else:
+            is_training = self.training
+            self.train(self.train_quantization)
+            for i, (emb, scale, pred_f0, pred_uv) in enumerate(frames):
+                qv = self.quantizer.forward(emb, self.sample_rate, self.bandwidth)
+                loss_f0 = self.f0_classifier.loss(pred_f0, encoded_f0[i])
+                loss_uv = self.uv_classifier.loss(pred_uv, encoded_uv[i])
+                loss_enc = loss_enc + qv.penalty + l2Loss(qv.quantized, emb) ** 2 + loss_f0 * 1e-6 + loss_uv * 1e-3
+                codes.append((qv.quantized, scale))
+            self.train(is_training)
+            return self.decode(codes)[:, :, :x.shape[-1]], loss_enc, frames, loss_f0, loss_uv
 
     def set_target_bandwidth(self, bandwidth: float):
         if bandwidth not in self.target_bandwidths:

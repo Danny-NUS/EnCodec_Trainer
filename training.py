@@ -12,7 +12,7 @@ EPSILON = 1e-8
 BATCH_SIZE = 5 #5#55
 TENSOR_CUT = 48000 #10000
 MAX_EPOCH = 10000 # Just set this to a very big number and manually stop it
-SAVE_FOLDER = f'/data2/xintong/EnCodec_Finetune/news_LibriTTS/'
+SAVE_FOLDER = f'/data2/junchuan/EnCodec_Finetune/disentangle_stage/'
 SAVE_LOCATION = f'{SAVE_FOLDER}batch{BATCH_SIZE}_cut{TENSOR_CUT}_' # appends epoch{epoch}.pth
 
 if not os.path.exists(SAVE_FOLDER):
@@ -101,46 +101,86 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
     disc.cuda()
 
 
-    lr = 0.01
+    lr = 0.00001
     # optimizer = optim.SGD([{'params': model.parameters(), 'lr': lr}], momentum=0.9)
     # optimizer_disc = optim.SGD([{'params': disc.parameters(), 'lr': lr*10}], momentum=0.9)
+    
+    optimizer_enc = optim.AdamW([{'params': model.encoder.parameters(), 'lr': lr}], betas=(0.8, 0.99))
     optimizer = optim.AdamW([{'params': model.parameters(), 'lr': lr}], betas=(0.8, 0.99))
     optimizer_disc = optim.AdamW([{'params': disc.parameters(), 'lr': lr}], betas=(0.8, 0.99))
+
+    def train_classifier(epoch):
+        train_d = False
+        print('----------------------------------------Epoch: {}----------------------------------------'.format(epoch))
+        for batch_idx, (input_wav, f0, uv) in enumerate(trainloader):
+            with torch.autograd.set_detect_anomaly(True):
+                if torch.all(f0 == 0):
+                    continue
+                train_d = not train_d
+                input_wav = input_wav.cuda()
+                f0 = f0.cuda().long()
+                uv = uv.cuda().long()
+                optimizer_enc.zero_grad()
+                model.encoder.zero_grad()
+                loss_f0, loss_uv = model(input_wav, f0, uv, "encoder")
+                loss_prosody = loss_f0 * 1e-5 + loss_f0 * 1e-2
+
+                loss_prosody.backward()
+                optimizer.step()
+
+                if batch_idx % log_interval == 0:
+                    print(torch.cuda.mem_get_info())
+                    print(f"Train Epoch: {epoch} [{batch_idx * len(input_wav)}/{len(trainloader.dataset)} ({100. * batch_idx / len(trainloader):.0f}%)], loss {loss_prosody.item()} loss_f0 {loss_f0.item()}, loss_uv {loss_uv.item()}")
+
 
     def train(epoch):
         last_loss = 0
         train_d = False
         print('----------------------------------------Epoch: {}----------------------------------------'.format(epoch))
+        checkpoint_path = "/data2/junchuan/EnCodec_Finetune/news_LibriTTS/batch5_cut50000_epoch90.pth"
+        checkpoint = torch.load(checkpoint_path, map_location=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
+        encoder_state_dict = {k.replace("encoder.", ""): v for k, v in checkpoint.items() if k.startswith("encoder.")}
+        decoder_state_dict = {k.replace("decoder.", ""): v for k, v in checkpoint.items() if k.startswith("decoder.")}
+        quantizer_state_dict = {k.replace("quantizer.", ""): v for k, v in checkpoint.items() if k.startswith("quantizer.")}
+        model.encoder.load_state_dict(encoder_state_dict)
+        model.decoder.load_state_dict(decoder_state_dict)
+        model.quantizer.load_state_dict(quantizer_state_dict)
+
         for batch_idx, (input_wav, f0, uv) in enumerate(trainloader):
-            train_d = not train_d
-            input_wav = input_wav.cuda()
-            f0 = f0.cuda().long()
-            uv = uv.cuda().long()
-            optimizer.zero_grad()
-            model.zero_grad()
-            optimizer_disc.zero_grad()
-            disc.zero_grad()
-            output, loss_enc, _, loss_f0, loss_uv = model(input_wav, f0, uv)
+            with torch.autograd.set_detect_anomaly(True):
+                if torch.all(f0 == 0):
+                    continue
+                train_d = not train_d
+                input_wav = input_wav.cuda()
+                f0 = f0.cuda().long()
+                uv = uv.cuda().long()
+                optimizer.zero_grad()
+                model.zero_grad()
+                optimizer_disc.zero_grad()
+                disc.zero_grad()
+                output, loss_enc, _, loss_f0, loss_uv = model(input_wav, f0, uv, "full")
 
-            logits_real, fmap_real = disc(input_wav)
-            if train_d:
-                logits_fake, _ = disc(model(input_wav, f0, uv)[0].detach())
-                loss = disc_loss(logits_real, logits_fake)
-                if loss > last_loss/2:
-                    loss.backward()
-                    optimizer_disc.step()
-                last_loss = 0
 
-            logits_fake, fmap_fake = disc(output)
-            loss = total_loss(fmap_real, logits_fake, fmap_fake, input_wav, output)
-            last_loss += loss.item()
-            loss_enc.backward(retain_graph=True)
-            loss.backward()
-            optimizer.step()
 
-            if batch_idx % log_interval == 0:
-                print(torch.cuda.mem_get_info())
-                print(f"Train Epoch: {epoch} [{batch_idx * len(input_wav)}/{len(trainloader.dataset)} ({100. * batch_idx / len(trainloader):.0f}%)], loss_enc: {loss_enc.item()}, loss {loss.item()} loss_f0 {loss_f0.item()}, loss_uv {loss_uv.item()}")
+                logits_real, fmap_real = disc(input_wav)
+                if train_d:
+                    logits_fake, _ = disc(model(input_wav, f0, uv)[0].detach())
+                    loss = disc_loss(logits_real, logits_fake)
+                    if loss > last_loss/2:
+                        loss.backward()
+                        optimizer_disc.step()
+                    last_loss = 0
+
+                logits_fake, fmap_fake = disc(output)
+                loss = total_loss(fmap_real, logits_fake, fmap_fake, input_wav, output)
+                last_loss = last_loss + loss.item()
+                loss_enc.backward(retain_graph=True)
+                loss.backward()
+                optimizer.step()
+
+                if batch_idx % log_interval == 0:
+                    print(torch.cuda.mem_get_info())
+                    print(f"Train Epoch: {epoch} [{batch_idx * len(input_wav)}/{len(trainloader.dataset)} ({100. * batch_idx / len(trainloader):.0f}%)], loss_enc: {loss_enc.item()}, loss {loss.item()} loss_f0 {loss_f0.item()}, loss_uv {loss_uv.item()}")
 
 
     def adjust_learning_rate(optimizer, epoch):
@@ -150,8 +190,10 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
 
 
     for epoch in range(1, max_epoch):
-
-        train(epoch)
+        if epoch < 100:
+            train_classifier(epoch)
+        else:
+            train(epoch)
         torch.save(model.state_dict(), f'{SAVE_LOCATION}epoch{epoch}.pth') #epoch{epoch}.pth
         torch.save(disc.state_dict(), f'{SAVE_LOCATION}epoch{epoch}_disc.pth')
 

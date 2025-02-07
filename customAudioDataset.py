@@ -7,7 +7,6 @@ import json
 import torchaudio.transforms as T
 
 
-import torchaudio
 # import pesto
 import multiprocessing
 import soundfile as sf
@@ -20,56 +19,69 @@ from scipy.signal import resample_poly
 import torchaudio
 import torchaudio.transforms as T
 import torch.nn.functional as F
-        
-def extractor_pyworld(x, sr, frame_shift):
-    x = x.squeeze(0).cpu().numpy().astype(np.float64)
-    # try:
-        # f0, t = pw.dio(x, sr, f0_floor=f0_floor, f0_ceil=f0_ceil, frame_period=frame_shift)
-    f0, t = pw.dio(x, sr, frame_period=frame_shift)
-    f0 = pw.stonemask(x, f0, t, sr)
-    # except Exception as e:
-    # print(f0.min(), f0.max())
-    # print(x.min(), x.max())
-    uv = np.zeros(f0.shape).astype('float32')
-    uv[np.where(f0 > 0)] = 1
 
-    non_zero_values = f0[f0 != 0]  # Extract non-zero values
-    normalized_values = (non_zero_values - non_zero_values.min()) / (non_zero_values.max() - non_zero_values.min())
-
-    scaled_values = np.round(normalized_values * 254).astype(int) + 1
-
-    f0[f0 != 0] = scaled_values
-    f0 = f0.astype(int)
-
-    return f0, uv
-
-def pitch_to_f0(pitch):
-    if pitch == 0:
-        return 0
-    return 27.5 * math.pow(2, (pitch - 21) / 12)
+def normalize_f0(f0):
+    # check all 0 case
+    if np.all(f0 == 0):
+        return np.zeros_like(f0, dtype=int)
     
-def f0ToPitch(f0):
-    return np.log2(f0 / 27.5) * 12 + 21
+    non_zero_f0 = f0[f0 != 0]
+    
+    # normalize to 0-1
+    if non_zero_f0.size > 0:
+        f0_min = np.min(non_zero_f0)
+        f0_max = np.max(non_zero_f0)
+    
+        if f0_max == f0_min:
+            normalized_non_zero_f0 = np.zeros_like(non_zero_f0)
+        else:
+            normalized_non_zero_f0 = (non_zero_f0 - f0_min) / (f0_max - f0_min)
+    else:
+        normalized_non_zero_f0 = np.zeros_like(non_zero_f0)
 
-def coarse_f0(f0, f0_bin):
-    f0_mel = 1127 * np.log(1 + f0 / 700)
-    f0_mel[f0_mel > 0] = (f0_mel[f0_mel > 0] - f0_mel_min) * (
-        f0_bin - 2
-    ) / (f0_mel_max - f0_mel_min) + 1
+    quantized_f0 = np.clip(np.round(normalized_non_zero_f0 * 254) + 1, 1, 255).astype(int)
 
-    # use 0 or 1
-    f0_mel[f0_mel <= 1] = 1
-    f0_mel[f0_mel > f0_bin - 1] = f0_bin - 1
-    f0_coarse = np.rint(f0_mel).astype(int)
-    assert f0_coarse.max() <= (f0_bin - 1) and f0_coarse.min() >= 1, (
-        f0_coarse.max(),
-        f0_coarse.min(),
-    )
-    return f0_coarse
+    result_f0 = np.zeros_like(f0, dtype=int)
+    result_f0[f0 != 0] = quantized_f0
+
+    return result_f0
+
+def extractor_pyworld(x, sr, frame_shift):
+    if isinstance(x, torch.Tensor):
+        x = x.numpy().flatten()
+    x = x.astype(np.float64)
+
+    f0, _ = pw.harvest(x, sr, frame_period=frame_shift)
+    f0 = normalize_f0(f0)
+    uv = (f0 > 0).astype(np.float32)
+    return f0[:-1], uv[:-1]
+
+# def pitch_to_f0(pitch):
+#     if pitch == 0:
+#         return 0
+#     return 27.5 * math.pow(2, (pitch - 21) / 12)
+    
+# def f0ToPitch(f0):
+#     return np.log2(f0 / 27.5) * 12 + 21
+
+# def coarse_f0(f0, f0_bin):
+#     f0_mel = 1127 * np.log(1 + f0 / 700)
+#     f0_mel[f0_mel > 0] = (f0_mel[f0_mel > 0] - f0_mel_min) * (
+#         f0_bin - 2
+#     ) / (f0_mel_max - f0_mel_min) + 1
+
+#     # use 0 or 1
+#     f0_mel[f0_mel <= 1] = 1
+#     f0_mel[f0_mel > f0_bin - 1] = f0_bin - 1
+#     f0_coarse = np.rint(f0_mel).astype(int)
+#     assert f0_coarse.max() <= (f0_bin - 1) and f0_coarse.min() >= 1, (
+#         f0_coarse.max(),
+#         f0_coarse.min(),
+#     )
+#     return f0_coarse
 
 f0_floor = 60
 f0_ceil = 1400
-frame_periods = [5/3]
 f0_mel_min = 1127 * np.log(1 + f0_floor / 700)
 f0_mel_max = 1127 * np.log(1 + f0_ceil / 700)
 
@@ -113,6 +125,8 @@ class CustomAudioDataset(torch.utils.data.Dataset):
                 pad_size = self.tensor_cut - waveform.size(1)
                 waveform = F.pad(waveform, (0, pad_size))
         f0, uv = extractor_pyworld(waveform, 24000, 40/24000 * 1000)
-            
-        return waveform, sample_rate, torch.tensor(f0[:-1]).to(waveform.device).unsqueeze(0), torch.tensor(uv[:-1]).to(waveform.device).unsqueeze(0)
 
+        f0_tensor = torch.tensor(f0, device=waveform.device).unsqueeze(0)
+        uv_tensor = torch.tensor(uv, device=waveform.device).unsqueeze(0)
+            
+        return waveform, sample_rate, f0_tensor, uv_tensor

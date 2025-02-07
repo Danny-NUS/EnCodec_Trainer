@@ -58,7 +58,7 @@ song = Path('audio/000002.wav')
 output = Path('audio/output_000002.ecdc')
 outputw = Path('audio/output_000002.wav')
 model_name = 'my_encodec_24khz' # 'encodec_24khz'
-model = MODELS[model_name]("/data2/junchuan/EnCodec_Finetune/news_LibriTTS/batch5_cut50000_epoch35.pth").to(device)
+model = MODELS[model_name]("/data2/junchuan/EnCodec_Finetune/news_LibriTTS/batch5_cut50000_epoch90.pth").to(device)
 
 model.train()
 wav, sr = torchaudio.load(song)
