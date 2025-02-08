@@ -85,7 +85,8 @@ f0_ceil = 1400
 f0_mel_min = 1127 * np.log(1 + f0_floor / 700)
 f0_mel_max = 1127 * np.log(1 + f0_ceil / 700)
 
-
+f0_root = "/data2/junchuan/libriTTS_prosody/f0"
+uv_root = "/data2/junchuan/libriTTS_prosody/uv"
 
 class CustomAudioDataset(torch.utils.data.Dataset):
     def __init__(self, meta_path, transform=None, tensor_cut=0, fixed_length=None):
@@ -112,21 +113,38 @@ class CustomAudioDataset(torch.utils.data.Dataset):
         self.transform = T.Resample(orig_freq=sample_rate, new_freq=24000)
         if sample_rate != 24000:
             waveform = self.transform(waveform)
-        # try:
-        #     f0, uv = extractor_pyworld(waveform, 24000, 40/24000 * 1000)
-        # except Exception as e:
-        #     print(waveform.min(), waveform.max())
-        #     print(f0.min(), f0.max())
+
+        # Load f0 and uv
+        f0_path = os.path.join(f0_root, audio_path.split("/")[-1].replace(".wav", ".pt"))
+        f0 = torch.load(f0_path)
+        uv = (f0 > 0).float()
+       
         if self.tensor_cut > 0:
             if waveform.size()[1] > self.tensor_cut:
                 start = random.randint(0, waveform.size()[1]-self.tensor_cut-1)
                 waveform = waveform[:, start:start+self.tensor_cut]
+
+                start_prosody = round(start / 40)
+                if start_prosody + self.tensor_cut / 40 < f0.size(1) - 1: 
+                    f0 = f0[:, start_prosody:start_prosody+int(self.tensor_cut/40)]
+                    uv = uv[:, start_prosody:start_prosody+int(self.tensor_cut/40)]
+                else:
+                    f0 = f0[:, start:]
+                    uv = uv[:, start:]
+
+                    pad_size_prosody = int(self.tensor_cut/40 - f0.size(1))
+                    f0 = F.pad(f0, (0, pad_size_prosody))
+                    uv = F.pad(uv, (0, pad_size_prosody))
             else:
                 pad_size = self.tensor_cut - waveform.size(1)
                 waveform = F.pad(waveform, (0, pad_size))
-        f0, uv = extractor_pyworld(waveform, 24000, 40/24000 * 1000)
 
-        f0_tensor = torch.tensor(f0, device=waveform.device).unsqueeze(0)
-        uv_tensor = torch.tensor(uv, device=waveform.device).unsqueeze(0)
+                pad_size_prosody = int(self.tensor_cut/40 - f0.size(1))
+                f0 = F.pad(f0, (0, pad_size_prosody))
+                uv = F.pad(uv, (0, pad_size_prosody))
+        # f0, uv = extractor_pyworld(waveform, 24000, 40/24000 * 1000)
+
+        # f0_tensor = torch.tensor(f0, device=waveform.device).unsqueeze(0)
+        # uv_tensor = torch.tensor(uv, device=waveform.device).unsqueeze(0)
             
-        return waveform, sample_rate, f0_tensor, uv_tensor
+        return waveform, sample_rate, f0, uv
