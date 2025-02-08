@@ -76,8 +76,10 @@ class ReversalClassifier(torch.nn.Module):
         
         # self._classifier = STL(token_num=output_dim, token_embedding_size=256, num_heads=8, ref_enc_gru_size=128)
 
-    def forward(self, x):  
-        x = GradientReversalFunction.apply(x, self._lambda, self._clipping)
+    def forward(self, x, train_stage="full"):
+        if train_stage != "encoder":
+            x = GradientReversalFunction.apply(x, self._lambda, self._clipping)
+
         x = self._classifier(x)
         return x
     

@@ -3,7 +3,7 @@ import torch.optim as optim
 import customAudioDataset as data
 import os
 import torch.backends.cudnn as cudnn
-
+os.environ["CUDA_VISIBLE_DEVICES"] = '2'
 from model import EncodecModel 
 from msstftd import MultiScaleSTFTDiscriminator
 from audio_to_mel import Audio2Mel
@@ -12,7 +12,7 @@ EPSILON = 1e-8
 BATCH_SIZE = 5 #5#55
 TENSOR_CUT = 48000 #10000
 MAX_EPOCH = 10000 # Just set this to a very big number and manually stop it
-SAVE_FOLDER = f'/data2/junchuan/EnCodec_Finetune/disentangle_stage/'
+SAVE_FOLDER = f'/data2/xintong/EnCodec_Finetune/disentangle_stage/'
 SAVE_LOCATION = f'{SAVE_FOLDER}batch{BATCH_SIZE}_cut{TENSOR_CUT}_' # appends epoch{epoch}.pth
 
 if not os.path.exists(SAVE_FOLDER):

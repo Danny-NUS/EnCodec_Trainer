@@ -152,7 +152,7 @@ class EncodecModel(nn.Module):
             return None
         return max(1, int((1 - self.overlap) * prosody_length))
 
-    def encode(self, x: torch.Tensor, f0: torch.Tensor, uv: torch.Tensor) -> tp.List[EncodedFrame]:
+    def encode(self, x: torch.Tensor, f0: torch.Tensor, uv: torch.Tensor, train_stage) -> tp.List[EncodedFrame]:
         """Given a tuple of tensor `x`, returns a list of frames containing
         the discrete encoded codes for `x`, along with rescaling factors
         for each segment, when `self.normalize` is True.
@@ -206,7 +206,7 @@ class EncodecModel(nn.Module):
         for idx, offset in enumerate(range(0, x_length, stride)):
             # print("start:", offset, "end:", offset + segment_length)
             frame = x[:, :, offset: offset + segment_length]
-            encoded_frames.append(self._encode_frame(frame, encoded_f0[idx][1], encoded_uv[idx][1]))
+            encoded_frames.append(self._encode_frame(frame, encoded_f0[idx][1], encoded_uv[idx][1], train_stage))
             
         # import pdb
         # pdb.set_trace()
@@ -222,7 +222,7 @@ class EncodecModel(nn.Module):
         e = e.permute(0, 3, 2, 1).squeeze(3)
         return x, e
 
-    def _encode_frame(self, x: torch.Tensor, f0_emb: torch.Tensor, uv_emb: torch.Tensor) -> EncodedFrame:
+    def _encode_frame(self, x: torch.Tensor, f0_emb: torch.Tensor, uv_emb: torch.Tensor, train_stage) -> EncodedFrame:
         length = x.shape[-1]
         duration = length / self.sample_rate
         assert self.segment is None or duration <= 1e-5 + self.segment
@@ -240,8 +240,8 @@ class EncodecModel(nn.Module):
         emb = self.encoder(x, "front") # torch.Size([5, 256, 600])
 
         # classifier
-        pred_f0 = self.f0_classifier(emb.transpose(1, 2)) # torch.Size([5, 600, 256])
-        pred_uv = self.uv_classifier(emb.transpose(1, 2)) # torch.Size([5, 600, 2])
+        pred_f0 = self.f0_classifier(emb.transpose(1, 2), train_stage) # torch.Size([5, 600, 256])
+        pred_uv = self.uv_classifier(emb.transpose(1, 2), train_stage) # torch.Size([5, 600, 2])
 
         # any problem with scale?
         emb = emb + f0_emb.to(emb.device) + uv_emb.to(emb.device)
@@ -287,7 +287,7 @@ class EncodecModel(nn.Module):
 
     def forward(self, x: torch.Tensor, f0: torch.Tensor, uv: torch.Tensor, train_stage: str) -> tuple[torch.Tensor, int, list[tuple[torch.Tensor, torch.Tensor]]]:
         l2Loss = torch.nn.MSELoss(reduction='mean')
-        frames, encoded_f0, encoded_uv = self.encode(x, f0, uv)
+        frames, encoded_f0, encoded_uv = self.encode(x, f0, uv, train_stage)
         loss_enc = torch.tensor([0.0], device=x.device, requires_grad=True)
         codes = []
 
