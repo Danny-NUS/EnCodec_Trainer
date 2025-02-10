@@ -88,14 +88,21 @@ f0_mel_max = 1127 * np.log(1 + f0_ceil / 700)
 f0_root = "/data2/junchuan/libriTTS_prosody/f0"
 uv_root = "/data2/junchuan/libriTTS_prosody/uv"
 
+discrete_tgt = "/data2/xintong/LibriTTS_encodec_codes/train-clean-100"
+continuous_tgt = "/data2/xintong/LibriTTS_encodec_continuous"
+
 class CustomAudioDataset(torch.utils.data.Dataset):
-    def __init__(self, meta_path, transform=None, tensor_cut=0, fixed_length=None):
+    def __init__(self, meta_path, discrete=True, transform=None, tensor_cut=0, fixed_length=None):
         with open(meta_path, "r", encoding="utf-8") as f:
             meta_data = json.load(f)
         self.meta_data = meta_data
         self.transform = transform
         self.fixed_length = fixed_length
         self.tensor_cut = tensor_cut
+        if discrete is True:
+            self.tgt_path = discrete_tgt
+        else:
+            self.tgt_path = continuous_tgt
 
     def __len__(self):
         if self.fixed_length:
@@ -105,6 +112,11 @@ class CustomAudioDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         audio_path = self.meta_data[idx]
         waveform, sample_rate = torchaudio.load(audio_path)
+
+        filename = os.path.splitext(os.path.basename(audio_path))[0]
+        id1, id2 = filename.split("_")[:2]
+        tgt_path = os.path.join(self.tgt_path, id1, id2, f"{filename}.npy")
+        tgt = torch.tensor(np.load(tgt_path), dtype=torch.int32).to(waveform.device)
 
         if self.transform:
             waveform = self.transform(waveform)
@@ -117,13 +129,13 @@ class CustomAudioDataset(torch.utils.data.Dataset):
         # Load f0 and uv
         f0_path = os.path.join(f0_root, audio_path.split("/")[-1].replace(".wav", ".pt"))
         f0 = torch.load(f0_path)
-        uv = (f0 > 0).float()
+        uv = torch.logical_not((f0 > 0).float())
        
         if self.tensor_cut > 0:
             if waveform.size()[1] > self.tensor_cut:
                 start = random.randint(0, waveform.size()[1]-self.tensor_cut-1)
                 waveform = waveform[:, start:start+self.tensor_cut]
-
+                
                 start_prosody = round(start / 40)
                 if start_prosody + self.tensor_cut / 40 < f0.size(1) - 1: 
                     f0 = f0[:, start_prosody:start_prosody+int(self.tensor_cut/40)]
@@ -135,6 +147,15 @@ class CustomAudioDataset(torch.utils.data.Dataset):
                     pad_size_prosody = int(self.tensor_cut/40 - f0.size(1))
                     f0 = F.pad(f0, (0, pad_size_prosody))
                     uv = F.pad(uv, (0, pad_size_prosody))
+
+                start_tgt = round(start / 320)
+
+                if start_tgt + self.tensor_cut / 320 < tgt.size(2) - 1: 
+                    tgt = tgt[:, start_tgt:start_tgt + int(self.tensor_cut/320)]
+                else:
+                    tgt = tgt[:, start:]
+                    pad_size_tgt = int(self.tensor_cut/320 - tgt.size(2))
+                    tgt = F.pad(tgt, (0, pad_size_tgt))
             else:
                 pad_size = self.tensor_cut - waveform.size(1)
                 waveform = F.pad(waveform, (0, pad_size))
@@ -142,9 +163,10 @@ class CustomAudioDataset(torch.utils.data.Dataset):
                 pad_size_prosody = int(self.tensor_cut/40 - f0.size(1))
                 f0 = F.pad(f0, (0, pad_size_prosody))
                 uv = F.pad(uv, (0, pad_size_prosody))
-        # f0, uv = extractor_pyworld(waveform, 24000, 40/24000 * 1000)
 
-        # f0_tensor = torch.tensor(f0, device=waveform.device).unsqueeze(0)
-        # uv_tensor = torch.tensor(uv, device=waveform.device).unsqueeze(0)
+
+
+                pad_size_tgt = int(self.tensor_cut/320 - tgt.size(2))
+                tgt = F.pad(tgt, (0, pad_size_tgt))
             
-        return waveform, sample_rate, f0, uv
+        return waveform, sample_rate, f0, uv, tgt

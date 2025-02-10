@@ -296,7 +296,6 @@ class EncodecModel(nn.Module):
         if train_stage == "encoder":
             is_training = self.training
             for i, (emb, scale, pred_f0, pred_uv) in enumerate(frames):
-                qv = self.quantizer.forward(emb, self.sample_rate, self.bandwidth)
                 loss_f0 = self.f0_classifier.loss(pred_f0, encoded_f0[i])
                 loss_uv = self.uv_classifier.loss(pred_uv, encoded_uv[i])
                 loss_f0_sum += loss_f0

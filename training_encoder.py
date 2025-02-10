@@ -131,13 +131,12 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
                 print(torch.cuda.mem_get_info())
                 print(f"Train Epoch: {epoch} [{batch_idx * len(input_wav)}/{len(trainloader.dataset)} ({100. * batch_idx / len(trainloader):.0f}%)], loss {loss_prosody.item()} loss_f0 {loss_f0.item()}, loss_uv {loss_uv.item()}")
 
-
     def train(epoch):
         last_loss = 0
         train_d = False
         print('----------------------------------------Epoch: {}----------------------------------------'.format(epoch))
 
-        for batch_idx, (input_wav, f0, uv, tgt) in enumerate(trainloader):
+        for batch_idx, (input_wav, f0, uv) in enumerate(trainloader):
             if torch.all(f0 == 0):
                 continue
             train_d = not train_d
@@ -149,6 +148,8 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
             optimizer_disc.zero_grad()
             disc.zero_grad()
             output, loss_enc, _, loss_f0, loss_uv = model(input_wav, f0, uv, "full")
+
+
 
             logits_real, fmap_real = disc(input_wav)
             if train_d:

@@ -100,7 +100,7 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
     disc.train()
     disc.cuda()
 
-    lr_enc = 0.0001
+    lr_enc = 0.001
     lr = 0.00001
     # optimizer = optim.SGD([{'params': model.parameters(), 'lr': lr}], momentum=0.9)
     # optimizer_disc = optim.SGD([{'params': disc.parameters(), 'lr': lr*10}], momentum=0.9)
@@ -137,7 +137,7 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
         train_d = False
         print('----------------------------------------Epoch: {}----------------------------------------'.format(epoch))
 
-        for batch_idx, (input_wav, f0, uv, tgt) in enumerate(trainloader):
+        for batch_idx, (input_wav, f0, uv) in enumerate(trainloader):
             if torch.all(f0 == 0):
                 continue
             train_d = not train_d
@@ -149,6 +149,8 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
             optimizer_disc.zero_grad()
             disc.zero_grad()
             output, loss_enc, _, loss_f0, loss_uv = model(input_wav, f0, uv, "full")
+
+
 
             logits_real, fmap_real = disc(input_wav)
             if train_d:
@@ -179,6 +181,10 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
 
     for epoch in range(1, max_epoch):
         if epoch < 100:
+            checkpoint_path = "/data2/junchuan/EnCodec_Finetune/disentangle_stage/batch5_cut48000_epoch4.pth"
+            checkpoint = torch.load(checkpoint_path, map_location=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
+            encoder_state_dict = {k.replace("encoder.", ""): v for k, v in checkpoint.items() if k.startswith("encoder.")}
+            model.encoder.load_state_dict(encoder_state_dict)
             train_classifier(epoch)
         elif epoch == 100:
             checkpoint_path = "/data2/junchuan/EnCodec_Finetune/news_LibriTTS/batch5_cut50000_epoch90.pth"
