@@ -10,6 +10,7 @@ import typing as tp
 
 import numpy as np
 import torch.nn as nn
+import torch
 
 from . import (
     SConv1d,
@@ -106,6 +107,7 @@ class SEANetEncoder(nn.Module):
         self.n_residual_layers = n_residual_layers
         self.hop_length = np.prod(self.ratios)
 
+
         act = getattr(nn, activation)
         mult = 1
         model: tp.List[nn.Module] = [
@@ -144,6 +146,10 @@ class SEANetEncoder(nn.Module):
 
         self.model = nn.Sequential(*model)
 
+        # learnable scale and bias
+        self.scale = nn.Parameter(torch.tensor(1.0))
+        self.bias = nn.Parameter(torch.tensor(0.0))
+
     def forward(self, x, segment):
         y = x
         if segment == "front":
@@ -159,7 +165,9 @@ class SEANetEncoder(nn.Module):
                     # print(f"{i}: {y.shape}")
             return y
         else:
-            return self.model(x)
+            # print(self.scale, self.bias)
+            return self.model(x) * self.scale + self.bias
+            # return self.model(x)
 
 
 class SEANetDecoder(nn.Module):

@@ -270,7 +270,7 @@ class EncodecModel(nn.Module):
 
         # first several layers
         # emb = self.encoder(x)
-        emb = self.encoder(x, "front") # torch.Size([5, 256, 600])
+        # emb = self.encoder(x, "front") # torch.Size([5, 256, 600])
 
         # classifier
         # pred_f0 = self.f0_classifier(emb.transpose(1, 2), train_stage) # torch.Size([5, 600, 256])
@@ -279,8 +279,11 @@ class EncodecModel(nn.Module):
         # any problem with scale?
         # emb = emb + f0_emb.to(emb.device) + uv_emb.to(emb.device)
         # the rest of the layers
-        emb = self.encoder(emb, "back")
+        # emb = self.encoder(emb, "back")
         # codes = self.quantizer.encode(emb, self.frame_rate, 6)
+
+        emb = self.encoder(x, "full")
+
         if self.training:# or True:
             # return emb, scale, pred_f0, pred_uv
             return emb, scale
@@ -340,6 +343,8 @@ class EncodecModel(nn.Module):
                 # codes = self.quantizer.encode(emb, self.frame_rate, self.bandwidth)
                 # print(qv.min(),)
                 loss_codes = loss_codes + l2Loss(emb, encoded_tgt[i])
+                # print("predict: ", emb.max(), emb.min(), emb.mean())
+                # print("target: ", encoded_tgt[i].max(), encoded_tgt[i].min(), encoded_tgt[i].mean())
 
             self.train(is_training)
             return loss_codes
@@ -350,7 +355,8 @@ class EncodecModel(nn.Module):
                 qv = self.quantizer.forward(emb, self.sample_rate, self.bandwidth)
                 loss_f0 = self.f0_classifier.loss(pred_f0, encoded_f0[i])
                 loss_uv = self.uv_classifier.loss(pred_uv, encoded_uv[i])
-                loss_enc = loss_enc + qv.penalty + l2Loss(qv.quantized, emb) ** 2 + loss_f0 * 1e-6 + loss_uv * 1e-3
+
+                loss_enc = loss_enc + qv.penalty + l2Loss(qv.quantized, emb) ** 2 + loss_f0 * 1e-6 + loss_uv * 1e-3 + l2Loss(emb, encoded_tgt[i])
                 codes.append((qv.quantized, scale))
             self.train(is_training)
             return self.decode(codes)[:, :, :x.shape[-1]], loss_enc, frames, loss_f0, loss_uv

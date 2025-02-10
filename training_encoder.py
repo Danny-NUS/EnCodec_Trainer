@@ -12,7 +12,7 @@ EPSILON = 1e-8
 BATCH_SIZE = 5 #5#55
 TENSOR_CUT = 48000 #10000
 MAX_EPOCH = 10000 # Just set this to a very big number and manually stop it
-SAVE_FOLDER = f'/data2/junchuan/EnCodec_Finetune/disentangle_stage/'
+SAVE_FOLDER = f'/data2/junchuan/EnCodec_Finetune/encoder only/'
 SAVE_LOCATION = f'{SAVE_FOLDER}batch{BATCH_SIZE}_cut{TENSOR_CUT}_' # appends epoch{epoch}.pth
 
 if not os.path.exists(SAVE_FOLDER):
@@ -108,14 +108,25 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
     disc.train()
     disc.cuda()
 
-    lr_enc = 0.0001
+    lr_enc = 0.001
     lr = 0.00001
     # optimizer = optim.SGD([{'params': model.parameters(), 'lr': lr}], momentum=0.9)
     # optimizer_disc = optim.SGD([{'params': disc.parameters(), 'lr': lr*10}], momentum=0.9)
     
-    optimizer_enc = optim.AdamW([{'params': model.encoder.parameters(), 'lr': lr_enc}], betas=(0.8, 0.99))
+    # optimizer_enc = optim.AdamW([{'params': model.encoder.parameters(), 'lr': lr_enc}], betas=(0.8, 0.99))
     optimizer = optim.AdamW([{'params': model.parameters(), 'lr': lr}], betas=(0.8, 0.99))
     optimizer_disc = optim.AdamW([{'params': disc.parameters(), 'lr': lr}], betas=(0.8, 0.99))
+
+
+    other_params = [
+        param for name, param in model.encoder.named_parameters()
+        if name not in ['scale', 'bias']
+    ]
+    optimizer_enc = optim.AdamW([
+        {'params': other_params, 'lr': 0.0001},
+        {'params': [model.encoder.scale, model.encoder.bias], 'lr': 0.1}
+    ], betas=(0.8, 0.99))
+
 
     def train_classifier(epoch):
         train_d = False
@@ -136,7 +147,7 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
             # loss_prosody = loss_f0 * 1e-5 + loss_f0 * 1e-2
 
             loss_tgt.backward()
-            optimizer.step()
+            optimizer_enc.step()
 
             if batch_idx % log_interval == 0:
                 print(torch.cuda.mem_get_info())
@@ -161,8 +172,6 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
             optimizer_disc.zero_grad()
             disc.zero_grad()
             output, loss_enc, _, loss_f0, loss_uv = model(input_wav, f0, uv, "full")
-
-
 
             logits_real, fmap_real = disc(input_wav)
             if train_d:
@@ -191,16 +200,17 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
                 param_group['lr'] = param_group['lr'] * 0.1
 
 
+    checkpoint_path = "/data2/junchuan/EnCodec_Finetune/news_LibriTTS/batch5_cut50000_epoch90.pth"
+    checkpoint = torch.load(checkpoint_path, map_location=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
+    encoder_state_dict = {k.replace("encoder.", ""): v for k, v in checkpoint.items() if k.startswith("encoder.")}
+    load_info = model.encoder.load_state_dict(encoder_state_dict, strict=False)
+    print('Missing keys:', load_info.missing_keys)
+
+
     for epoch in range(1, max_epoch):
         # if epoch < 100:
         train_classifier(epoch)
         # elif epoch == 100:
-        #     checkpoint_path = "/data2/junchuan/EnCodec_Finetune/news_LibriTTS/batch5_cut50000_epoch90.pth"
-        #     checkpoint = torch.load(checkpoint_path, map_location=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
-        #     encoder_state_dict = {k.replace("encoder.", ""): v for k, v in checkpoint.items() if k.startswith("encoder.")}
-        #     decoder_state_dict = {k.replace("decoder.", ""): v for k, v in checkpoint.items() if k.startswith("decoder.")}
-        #     quantizer_state_dict = {k.replace("quantizer.", ""): v for k, v in checkpoint.items() if k.startswith("quantizer.")}
-        #     model.encoder.load_state_dict(encoder_state_dict)
         #     model.decoder.load_state_dict(decoder_state_dict)
         #     model.quantizer.load_state_dict(quantizer_state_dict)
         #     train_classifier(epoch)
