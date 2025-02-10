@@ -105,13 +105,16 @@ class EncodecModel(nn.Module):
         self.segment = segment
         self.f0_embedding = nn.Embedding(num_embeddings=256, embedding_dim=256)
         self.uv_embedding = nn.Embedding(num_embeddings=2, embedding_dim=256)
-        self.prosody = segment/40
+        self.prosody = segment / 40
+        self.target = segment / 320
         self.overlap = overlap
-        self.f0_classifier = ReversalClassifier(input_dim=256, hidden_dim=384, output_dim=256)
-        self.uv_classifier = ReversalClassifier(input_dim=256, hidden_dim=384, output_dim=2)
+        # self.f0_classifier = ReversalClassifier(input_dim=256, hidden_dim=384, output_dim=256)
+        # self.uv_classifier = ReversalClassifier(input_dim=256, hidden_dim=384, output_dim=2)
         self.frame_rate = math.ceil(self.sample_rate / np.prod(self.encoder.ratios))
         self.name = name
         
+        for param in self.quantizer.parameters():
+            param.requires_grad = False
         # self.checkpoint_path = checkpoint_path
         # self.checkpoint = torch.load(self.checkpoint_path, map_location=device)
         # encoder_state_dict = {k.replace("encoder.", ""): v for k, v in self.checkpoint.items() if k.startswith("encoder.")}
@@ -151,8 +154,21 @@ class EncodecModel(nn.Module):
         if prosody_length is None:
             return None
         return max(1, int((1 - self.overlap) * prosody_length))
+    
+    @property
+    def target_length(self) -> tp.Optional[int]:
+        if self.target is None:
+            return None
+        return int(self.target * self.sample_rate)
 
-    def encode(self, x: torch.Tensor, f0: torch.Tensor, uv: torch.Tensor, train_stage) -> tp.List[EncodedFrame]:
+    @property
+    def target_stride(self) -> tp.Optional[int]:
+        target_length = self.target_length
+        if target_length is None:
+            return None
+        return max(1, int((1 - self.overlap) * target_length))
+
+    def encode(self, x: torch.Tensor, f0: torch.Tensor, uv: torch.Tensor, tgt, train_stage) -> tp.List[EncodedFrame]:
         """Given a tuple of tensor `x`, returns a list of frames containing
         the discrete encoded codes for `x`, along with rescaling factors
         for each segment, when `self.normalize` is True.
@@ -172,6 +188,8 @@ class EncodecModel(nn.Module):
         assert 0 < channels <= 2
         _, channels, uv_length = uv.shape
         assert 0 < channels <= 2
+        _, channels, tgt_length = tgt.shape
+        assert 0 < channels <= 128
 
         segment_length = self.segment_length
         if segment_length is None:
@@ -189,6 +207,14 @@ class EncodecModel(nn.Module):
             prosody_stride = self.prosody_stride  # type: ignore
             assert prosody_stride is not None
         
+        target_length = self.target_length
+        if target_length is None:
+            target_length = tgt_length
+            target_stride = tgt_length
+        else:
+            target_stride = self.target_stride  # type: ignore
+            assert target_stride is not None
+        
         encoded_f0: tp.List[EncodedFrame] = []
         # print("length:", length, "stride:", stride)
         for offset in range(0, pro_length, prosody_stride):
@@ -200,6 +226,12 @@ class EncodecModel(nn.Module):
             # print("start:", offset, "end:", offset + segment_length)
             frame = uv[:, :, offset: offset + prosody_length].to(torch.int32)
             encoded_uv.append(self._encode_prosody(frame, self.uv_embedding))
+        
+        encoded_tgt: tp.List[EncodedFrame] = []
+        for offset in range(0, tgt_length, target_stride):
+            # print("start:", offset, "end:", offset + segment_length)
+            frame = tgt[:, :, offset: offset + target_length]
+            encoded_tgt.append(frame)
 
         encoded_frames: tp.List[EncodedFrame] = []
         # print("length:", length, "stride:", stride)
@@ -211,7 +243,7 @@ class EncodecModel(nn.Module):
         # import pdb
         # pdb.set_trace()
         
-        return encoded_frames, [f0[0] for f0 in encoded_f0], [uv[0] for uv in encoded_uv]
+        return encoded_frames, [f0[0] for f0 in encoded_f0], [uv[0] for uv in encoded_uv], encoded_tgt
     
     def _encode_prosody(self, x: torch.Tensor, emb_layer: nn.Embedding) -> EncodedFrame:
         length = x.shape[-1]
@@ -237,20 +269,22 @@ class EncodecModel(nn.Module):
             scale = None
 
         # first several layers
+        # emb = self.encoder(x)
         emb = self.encoder(x, "front") # torch.Size([5, 256, 600])
 
         # classifier
-        pred_f0 = self.f0_classifier(emb.transpose(1, 2), train_stage) # torch.Size([5, 600, 256])
-        pred_uv = self.uv_classifier(emb.transpose(1, 2), train_stage) # torch.Size([5, 600, 2])
+        # pred_f0 = self.f0_classifier(emb.transpose(1, 2), train_stage) # torch.Size([5, 600, 256])
+        # pred_uv = self.uv_classifier(emb.transpose(1, 2), train_stage) # torch.Size([5, 600, 2])
 
         # any problem with scale?
-        emb = emb + f0_emb.to(emb.device) + uv_emb.to(emb.device)
+        # emb = emb + f0_emb.to(emb.device) + uv_emb.to(emb.device)
         # the rest of the layers
         emb = self.encoder(emb, "back")
-
+        # codes = self.quantizer.encode(emb, self.frame_rate, 6)
         if self.training:# or True:
-            return emb, scale, pred_f0, pred_uv
-
+            # return emb, scale, pred_f0, pred_uv
+            return emb, scale
+        
         codes = self.quantizer.encode(emb, self.frame_rate, self.bandwidth)
         codes = codes.transpose(0, 1)
         # codes is [B, K, T], with T frames, K nb of codebooks.
@@ -285,23 +319,30 @@ class EncodecModel(nn.Module):
             out = out * scale.view(-1, 1, 1)
         return out
 
-    def forward(self, x: torch.Tensor, f0: torch.Tensor, uv: torch.Tensor, train_stage: str) -> tuple[torch.Tensor, int, list[tuple[torch.Tensor, torch.Tensor]]]:
+    def forward(self, x: torch.Tensor, f0: torch.Tensor, uv: torch.Tensor, tgt, train_stage: str) -> tuple[torch.Tensor, int, list[tuple[torch.Tensor, torch.Tensor]]]:
+        self.quantizer.eval()
         l2Loss = torch.nn.MSELoss(reduction='mean')
-        frames, encoded_f0, encoded_uv = self.encode(x, f0, uv, train_stage)
+        # CELoss = torch.nn.CrossEntropyLoss()
+        frames, encoded_f0, encoded_uv, encoded_tgt = self.encode(x, f0, uv, tgt, train_stage)
         loss_enc = torch.tensor([0.0], device=x.device, requires_grad=True)
         codes = []
 
-        loss_f0_sum = 0
-        loss_uv_sum = 0
+        # loss_f0_sum = 0
+        loss_codes = 0
         if train_stage == "encoder":
             is_training = self.training
-            for i, (emb, scale, pred_f0, pred_uv) in enumerate(frames):
-                loss_f0 = self.f0_classifier.loss(pred_f0, encoded_f0[i])
-                loss_uv = self.uv_classifier.loss(pred_uv, encoded_uv[i])
-                loss_f0_sum += loss_f0
-                loss_uv_sum += loss_uv
-                self.train(is_training)
-            return loss_f0_sum, loss_uv_sum
+            for i, (emb, scale) in enumerate(frames):
+                # loss_f0 = self.f0_classifier.loss(pred_f0, encoded_f0[i])
+                # loss_uv = self.uv_classifier.loss(pred_uv, encoded_uv[i])
+                # loss_f0_sum += loss_f0
+                # loss_uv_sum += loss_uv
+                # self.bandwidth = 6
+                # codes = self.quantizer.encode(emb, self.frame_rate, self.bandwidth)
+                # print(qv.min(),)
+                loss_codes = loss_codes + l2Loss(emb, encoded_tgt[i])
+
+            self.train(is_training)
+            return loss_codes
         else:
             is_training = self.training
             self.train(self.train_quantization)

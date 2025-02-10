@@ -47,7 +47,10 @@ def disc_loss(logits_real, logits_fake):
 
 def pad_sequence(batch, max_len):
     # Make all tensor in a batch the same length by padding with zeros
-    batch = [item.permute(1, 0) for item in batch]
+    if batch[0].dim() == 3:
+        batch = [item.permute(2, 0, 1) for item in batch]
+    else:
+        batch = [item.permute(1, 0) for item in batch]
     batch = torch.nn.utils.rnn.pad_sequence(batch, batch_first=True, padding_value=0.)
     if batch.shape[1] < max_len:
         batch = torch.cat([batch, torch.zeros(max_len - batch.shape[0], *batch.shape[1:], dtype=batch.dtype)])
@@ -59,17 +62,22 @@ def collate_fn(batch):
     wavs = []
     f0s = []
     uvs = []
+    tgts = []
 
-    for waveform, _, f0, uv in batch:
+    for waveform, _, f0, uv, tgt in batch:
         wavs += [waveform]
         f0s += [f0]
         uvs += [uv]
+        tgts += [tgt]
 
     # Group the list of tensors into a batched tensor
     wavs = pad_sequence(wavs, TENSOR_CUT)
     f0s = pad_sequence(f0s, int(TENSOR_CUT/40))
     uvs = pad_sequence(uvs, int(TENSOR_CUT/40))
-    return wavs, f0s, uvs
+    # tgts = pad_sequence(tgts, int(TENSOR_CUT/320))
+    tgts = torch.cat(tgts) # (5,8,150)
+
+    return wavs, f0s, uvs, tgts
 
 
 def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=100000, batch_size=8):
@@ -93,7 +101,7 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
                 causal=False, model_norm='time_group_norm', audio_normalize=True,
                 segment=1., name='my_encodec_24khz')
     model.train()
-    model.train_quantization = True
+    model.train_quantization = False
     model.cuda()
     
     disc = MultiScaleSTFTDiscriminator(filters=32)
@@ -112,24 +120,28 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
     def train_classifier(epoch):
         train_d = False
         print('----------------------------------------Epoch: {}----------------------------------------'.format(epoch))
-        for batch_idx, (input_wav, f0, uv) in enumerate(trainloader):
+        for batch_idx, (input_wav, f0, uv, tgt) in enumerate(trainloader):
             if torch.all(f0 == 0):
                 continue
             train_d = not train_d
             input_wav = input_wav.cuda()
             f0 = f0.cuda().long()
             uv = uv.cuda().long()
+            tgt = tgt.cuda()
+
             optimizer_enc.zero_grad()
             model.encoder.zero_grad()
-            loss_f0, loss_uv = model(input_wav, f0, uv, "encoder")
-            loss_prosody = loss_f0 * 1e-5 + loss_f0 * 1e-2
 
-            loss_prosody.backward()
+            loss_tgt = model(input_wav, f0, uv, tgt, "encoder")
+            # loss_prosody = loss_f0 * 1e-5 + loss_f0 * 1e-2
+
+            loss_tgt.backward()
             optimizer.step()
 
             if batch_idx % log_interval == 0:
                 print(torch.cuda.mem_get_info())
-                print(f"Train Epoch: {epoch} [{batch_idx * len(input_wav)}/{len(trainloader.dataset)} ({100. * batch_idx / len(trainloader):.0f}%)], loss {loss_prosody.item()} loss_f0 {loss_f0.item()}, loss_uv {loss_uv.item()}")
+                print(f"Train Epoch: {epoch} [{batch_idx * len(input_wav)}/{len(trainloader.dataset)} ({100. * batch_idx / len(trainloader):.0f}%)], loss_tgt {loss_tgt.item()}")
+    
 
     def train(epoch):
         last_loss = 0
@@ -143,6 +155,7 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
             input_wav = input_wav.cuda()
             f0 = f0.cuda().long()
             uv = uv.cuda().long()
+
             optimizer.zero_grad()
             model.zero_grad()
             optimizer_disc.zero_grad()
@@ -179,20 +192,20 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
 
 
     for epoch in range(1, max_epoch):
-        if epoch < 100:
-            train_classifier(epoch)
-        elif epoch == 100:
-            checkpoint_path = "/data2/junchuan/EnCodec_Finetune/news_LibriTTS/batch5_cut50000_epoch90.pth"
-            checkpoint = torch.load(checkpoint_path, map_location=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
-            encoder_state_dict = {k.replace("encoder.", ""): v for k, v in checkpoint.items() if k.startswith("encoder.")}
-            decoder_state_dict = {k.replace("decoder.", ""): v for k, v in checkpoint.items() if k.startswith("decoder.")}
-            quantizer_state_dict = {k.replace("quantizer.", ""): v for k, v in checkpoint.items() if k.startswith("quantizer.")}
-            model.encoder.load_state_dict(encoder_state_dict)
-            model.decoder.load_state_dict(decoder_state_dict)
-            model.quantizer.load_state_dict(quantizer_state_dict)
-            train_classifier(epoch)
-        else:
-            train(epoch)
+        # if epoch < 100:
+        train_classifier(epoch)
+        # elif epoch == 100:
+        #     checkpoint_path = "/data2/junchuan/EnCodec_Finetune/news_LibriTTS/batch5_cut50000_epoch90.pth"
+        #     checkpoint = torch.load(checkpoint_path, map_location=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
+        #     encoder_state_dict = {k.replace("encoder.", ""): v for k, v in checkpoint.items() if k.startswith("encoder.")}
+        #     decoder_state_dict = {k.replace("decoder.", ""): v for k, v in checkpoint.items() if k.startswith("decoder.")}
+        #     quantizer_state_dict = {k.replace("quantizer.", ""): v for k, v in checkpoint.items() if k.startswith("quantizer.")}
+        #     model.encoder.load_state_dict(encoder_state_dict)
+        #     model.decoder.load_state_dict(decoder_state_dict)
+        #     model.quantizer.load_state_dict(quantizer_state_dict)
+        #     train_classifier(epoch)
+        # else:
+        #     train(epoch)
         torch.save(model.state_dict(), f'{SAVE_LOCATION}epoch{epoch}.pth') #epoch{epoch}.pth
         torch.save(disc.state_dict(), f'{SAVE_LOCATION}epoch{epoch}_disc.pth')
 
