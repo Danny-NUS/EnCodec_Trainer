@@ -64,7 +64,7 @@ def collate_fn(batch):
     uvs = []
     tgts = []
 
-    for waveform, _, f0, uv, tgt in batch:
+    for waveform, _, f0, uv, tgt, path in batch:
         wavs += [waveform]
         f0s += [f0]
         uvs += [uv]

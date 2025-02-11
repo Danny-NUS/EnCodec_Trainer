@@ -16,7 +16,7 @@ import torch
 
 import binary
 from quantization.ac import ArithmeticCoder, ArithmeticDecoder, build_stable_quantized_cdf
-from model import EncodecModel, EncodedFrame
+from model_scale import EncodecModel, EncodedFrame
 
 
 MODELS = {

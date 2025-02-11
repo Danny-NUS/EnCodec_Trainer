@@ -1,6 +1,7 @@
 import torch
 import torch.optim as optim
-import customAudioDataset as data
+# import customAudioDataset as data
+import customAudioDatasetFull as data
 import os
 import torch.backends.cudnn as cudnn
 os.environ["CUDA_VISIBLE_DEVICES"] = '2'
@@ -12,7 +13,7 @@ EPSILON = 1e-8
 BATCH_SIZE = 5 #5#55
 TENSOR_CUT = 48000 #10000
 MAX_EPOCH = 10000 # Just set this to a very big number and manually stop it
-SAVE_FOLDER = f'/data2/xintong/EnCodec_Finetune/encoder_only/'
+SAVE_FOLDER = f'/data2/junchuan/EnCodec_Finetune/encoder only/'
 SAVE_LOCATION = f'{SAVE_FOLDER}batch{BATCH_SIZE}_cut{TENSOR_CUT}_' # appends epoch{epoch}.pth
 
 if not os.path.exists(SAVE_FOLDER):
@@ -79,17 +80,42 @@ def collate_fn(batch):
 
     return wavs, f0s, uvs, tgts
 
+def collate_fn_both(batch):
+    wavs = []
+    f0s = []
+    uvs = []
+    tgts_d = []
+    tgts_c = []
+
+    for waveform, _, f0, uv, tgt in batch:
+        wavs += [waveform]
+        f0s += [f0]
+        uvs += [uv]
+        tgts_d += [tgt[0]]
+        tgts_c += [tgt[1]]
+
+    # Group the list of tensors into a batched tensor
+    wavs = pad_sequence(wavs, TENSOR_CUT)
+    f0s = pad_sequence(f0s, int(TENSOR_CUT/40))
+    uvs = pad_sequence(uvs, int(TENSOR_CUT/40))
+    # tgts = pad_sequence(tgts, int(TENSOR_CUT/320))
+
+    tgts_d = torch.cat(tgts_d) # (5,8,150)
+    tgts_c = torch.cat(tgts_c) # (5,8,150)
+
+    return wavs, f0s, uvs, tgts_d, tgts_c
+
 
 def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=100000, batch_size=8):
     data_path = 'LibriTTS_meta.json'
 
     if fixed_length > 0:
-        trainset = data.CustomAudioDataset(data_path, tensor_cut=tensor_cut, fixed_length=fixed_length)
+        trainset = data.CustomAudioDataset(data_path, target="both", tensor_cut=tensor_cut, fixed_length=fixed_length)
     else:
-        trainset = data.CustomAudioDataset(data_path, tensor_cut=tensor_cut)
+        trainset = data.CustomAudioDataset(data_path, target="both", tensor_cut=tensor_cut)
     
 
-    trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn,)
+    trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn_both,)
 
     cudnn.benchmark = True
 
@@ -131,9 +157,12 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
     def train_classifier(epoch):
         train_d = False
         print('----------------------------------------Epoch: {}----------------------------------------'.format(epoch))
-        for batch_idx, (input_wav, f0, uv, tgt) in enumerate(trainloader):
+        for batch_idx, (input_wav, f0, uv, tgt_d, tgt_c) in enumerate(trainloader):
             if torch.all(f0 == 0):
                 continue
+
+            import pdb
+            pdb.set_trace()
             train_d = not train_d
             input_wav = input_wav.cuda()
             f0 = f0.cuda().long()

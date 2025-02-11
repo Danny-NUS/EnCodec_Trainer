@@ -1,0 +1,64 @@
+Missing keys: ['conv_scale.weight', 'conv_scale.bias', 'fc1.weight', 'fc1.bias', 'fc2.weight', 'fc2.bias', 'conv_out.weight', 'conv_out.bias']
+----------------------------------------Epoch: 1----------------------------------------
+/home/xintong/miniconda3/envs/gradtts/lib/python3.10/site-packages/torch/functional.py:632: UserWarning: stft will soon require the return_complex parameter be given for real inputs, and will further require that return_complex=True in a future PyTorch release. (Triggered internally at ../aten/src/ATen/native/SpectralOps.cpp:801.)
+  return _VF.stft(input, n_fft, hop_length, win_length, window,  # type: ignore[attr-defined]
+(4360503296, 23710007296)
+Train Epoch: 1 [0/33236 (0%)], loss_enc: 56.36098098754883, loss 6.296146392822266, loss_qv_penalty: 0.0, loss_qv_quant: 2.5476627349853516, loss_emb: 53.813316345214844
+(4314365952, 23710007296)
+Train Epoch: 1 [500/33236 (2%)], loss_enc: 37.392852783203125, loss 5.38705587387085, loss_qv_penalty: 0.0, loss_qv_quant: 5.983330726623535, loss_emb: 31.409523010253906
+(4314365952, 23710007296)
+Train Epoch: 1 [1000/33236 (3%)], loss_enc: 34.438438415527344, loss 6.702076435089111, loss_qv_penalty: 0.0, loss_qv_quant: 6.026486396789551, loss_emb: 28.41195297241211
+(4314365952, 23710007296)
+Train Epoch: 1 [1500/33236 (5%)], loss_enc: 43.275508880615234, loss 5.571617603302002, loss_qv_penalty: 0.0, loss_qv_quant: 3.9663918018341064, loss_emb: 39.30911636352539
+(4314365952, 23710007296)
+Train Epoch: 1 [2000/33236 (6%)], loss_enc: 55.21271896362305, loss 7.298306465148926, loss_qv_penalty: 0.0, loss_qv_quant: 8.441595077514648, loss_emb: 46.77112579345703
+(4314365952, 23710007296)
+Train Epoch: 1 [2500/33236 (8%)], loss_enc: 39.28289794921875, loss 6.409395694732666, loss_qv_penalty: 0.0, loss_qv_quant: 4.07266902923584, loss_emb: 35.210227966308594
+(4314365952, 23710007296)
+Train Epoch: 1 [3000/33236 (9%)], loss_enc: 52.94672393798828, loss 5.944903373718262, loss_qv_penalty: 0.0, loss_qv_quant: 7.657052040100098, loss_emb: 45.2896728515625
+(4314365952, 23710007296)
+Train Epoch: 1 [3500/33236 (11%)], loss_enc: 46.05240249633789, loss 6.055245399475098, loss_qv_penalty: 0.0, loss_qv_quant: 6.547501564025879, loss_emb: 39.50489807128906
+(4314365952, 23710007296)
+Train Epoch: 1 [4000/33236 (12%)], loss_enc: 50.72529220581055, loss 6.968922138214111, loss_qv_penalty: 0.0, loss_qv_quant: 5.803677558898926, loss_emb: 44.92161178588867
+(4314365952, 23710007296)
+Train Epoch: 1 [4500/33236 (14%)], loss_enc: 39.0361328125, loss 6.154363632202148, loss_qv_penalty: 0.0, loss_qv_quant: 5.19698429107666, loss_emb: 33.839149475097656
+(4314365952, 23710007296)
+Train Epoch: 1 [5000/33236 (15%)], loss_enc: 43.510353088378906, loss 7.238156318664551, loss_qv_penalty: 0.0, loss_qv_quant: 5.378291606903076, loss_emb: 38.13206100463867
+(4314365952, 23710007296)
+Train Epoch: 1 [5500/33236 (17%)], loss_enc: 41.87898635864258, loss 6.359724521636963, loss_qv_penalty: 0.0, loss_qv_quant: 5.601879119873047, loss_emb: 36.27710723876953
+(4314365952, 23710007296)
+Train Epoch: 1 [6000/33236 (18%)], loss_enc: 36.95171356201172, loss 6.139191627502441, loss_qv_penalty: 0.0, loss_qv_quant: 4.706593990325928, loss_emb: 32.2451171875
+(4314365952, 23710007296)
+Train Epoch: 1 [6500/33236 (20%)], loss_enc: 52.263187408447266, loss 7.461395263671875, loss_qv_penalty: 0.0, loss_qv_quant: 6.646779537200928, loss_emb: 45.61640548706055
+(4314365952, 23710007296)
+Train Epoch: 1 [7000/33236 (21%)], loss_enc: 48.687374114990234, loss 6.907291889190674, loss_qv_penalty: 0.0, loss_qv_quant: 7.239748001098633, loss_emb: 41.44762420654297
+(4314365952, 23710007296)
+Train Epoch: 1 [7500/33236 (23%)], loss_enc: 44.9349365234375, loss 6.250476837158203, loss_qv_penalty: 0.0, loss_qv_quant: 7.201755523681641, loss_emb: 37.733177185058594
+(4314365952, 23710007296)
+Train Epoch: 1 [8000/33236 (24%)], loss_enc: 41.87141036987305, loss 6.483041763305664, loss_qv_penalty: 0.0, loss_qv_quant: 7.0649800300598145, loss_emb: 34.80643081665039
+(4314365952, 23710007296)
+Train Epoch: 1 [8500/33236 (26%)], loss_enc: 40.81617736816406, loss 6.294726848602295, loss_qv_penalty: 0.0, loss_qv_quant: 5.648437976837158, loss_emb: 35.16773986816406
+(4314365952, 23710007296)
+Train Epoch: 1 [9000/33236 (27%)], loss_enc: 44.10448455810547, loss 6.697481632232666, loss_qv_penalty: 0.0, loss_qv_quant: 5.788866996765137, loss_emb: 38.315616607666016
+(4314365952, 23710007296)
+Train Epoch: 1 [9500/33236 (29%)], loss_enc: 38.7174186706543, loss 6.751699447631836, loss_qv_penalty: 0.0, loss_qv_quant: 4.420957088470459, loss_emb: 34.29646301269531
+(4314365952, 23710007296)
+Train Epoch: 1 [10000/33236 (30%)], loss_enc: 55.55511474609375, loss 6.372393608093262, loss_qv_penalty: 0.0, loss_qv_quant: 6.547493934631348, loss_emb: 49.00762176513672
+(4314365952, 23710007296)
+Train Epoch: 1 [10500/33236 (32%)], loss_enc: 45.28999710083008, loss 6.565014839172363, loss_qv_penalty: 0.0, loss_qv_quant: 5.839119911193848, loss_emb: 39.45087432861328
+(4314365952, 23710007296)
+Train Epoch: 1 [11000/33236 (33%)], loss_enc: 32.535247802734375, loss 6.116230010986328, loss_qv_penalty: 0.0, loss_qv_quant: 3.9255237579345703, loss_emb: 28.609722137451172
+(4314365952, 23710007296)
+Train Epoch: 1 [11500/33236 (35%)], loss_enc: 42.45285415649414, loss 7.74220085144043, loss_qv_penalty: 0.0, loss_qv_quant: 4.569338321685791, loss_emb: 37.88351821899414
+(4314365952, 23710007296)
+Train Epoch: 1 [12000/33236 (36%)], loss_enc: 48.94921875, loss 7.08045768737793, loss_qv_penalty: 0.0, loss_qv_quant: 5.8725666999816895, loss_emb: 43.07665252685547
+(4314365952, 23710007296)
+Train Epoch: 1 [12500/33236 (38%)], loss_enc: 43.062992095947266, loss 6.514286994934082, loss_qv_penalty: 0.0, loss_qv_quant: 5.907661437988281, loss_emb: 37.155330657958984
+(4314365952, 23710007296)
+Train Epoch: 1 [13000/33236 (39%)], loss_enc: 38.080963134765625, loss 6.093514919281006, loss_qv_penalty: 0.0, loss_qv_quant: 4.723162651062012, loss_emb: 33.3577995300293
+(4314365952, 23710007296)
+Train Epoch: 1 [13500/33236 (41%)], loss_enc: 39.67098617553711, loss 6.838582515716553, loss_qv_penalty: 0.0, loss_qv_quant: 6.316057205200195, loss_emb: 33.35492706298828
+(4314365952, 23710007296)
+Train Epoch: 1 [14000/33236 (42%)], loss_enc: 45.79570770263672, loss 5.466255187988281, loss_qv_penalty: 0.0, loss_qv_quant: 6.564028739929199, loss_emb: 39.2316780090332
+(4314365952, 23710007296)
+Train Epoch: 1 [14500/33236 (44%)], loss_enc: 38.60077667236328, loss 5.922756195068359, loss_qv_penalty: 0.0, loss_qv_quant: 5.927088260650635, loss_emb: 32.67368698120117

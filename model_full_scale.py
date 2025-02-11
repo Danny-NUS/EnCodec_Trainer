@@ -80,7 +80,7 @@ class EncodecModel(nn.Module):
         name (str): name of the model, used as metadata when compressing audio.
     """
     def __init__(self,
-                 encoder: m.SEANetEncoder,
+                 encoder: m.SEANetEncoder_scale,
                  decoder: m.SEANetDecoder,
                  quantizer: qt.ResidualVectorQuantizer,
                  target_bandwidths: tp.List[float],
@@ -323,35 +323,33 @@ class EncodecModel(nn.Module):
         return out
 
     def forward(self, x: torch.Tensor, f0: torch.Tensor, uv: torch.Tensor, tgt, train_stage: str) -> tuple[torch.Tensor, int, list[tuple[torch.Tensor, torch.Tensor]]]:
-        # self.quantizer.eval()
+        self.quantizer.eval()
         l2Loss = torch.nn.MSELoss(reduction='mean')
-        l1Loss = torch.nn.L1Loss()
+        # l2Loss_codes = torch.nn.MSELoss(reduction='mean')
         frames, encoded_f0, encoded_uv, encoded_tgt = self.encode(x, f0, uv, tgt, train_stage)
         loss_enc = torch.tensor([0.0], device=x.device, requires_grad=True)
         codes = []
 
         # loss_f0_sum = 0
         loss_codes = 0
+        loss_qv_quant = 0
+        loss_qv_penalty = 0
+        loss_emb = 0
         if train_stage == "encoder":
-            # is_training = self.training
-            # is_training = self.training
-            # self.train(self.train_quantization)
+            is_training = self.training
             for i, (emb, scale) in enumerate(frames):
                 # loss_f0 = self.f0_classifier.loss(pred_f0, encoded_f0[i])
                 # loss_uv = self.uv_classifier.loss(pred_uv, encoded_uv[i])
                 # loss_f0_sum += loss_f0
                 # loss_uv_sum += loss_uv
                 # self.bandwidth = 6
-                codes = self.quantizer.encode(emb, self.frame_rate, 6)
-                # print(codes.requires_grad, encoded_tgt[i].requires_grad)
+                # codes = self.quantizer.encode(emb, self.frame_rate, self.bandwidth)
                 # print(qv.min(),)
-                codes = codes.float().requires_grad_(True)
-
-                loss_codes = loss_codes + l1Loss(codes.transpose(0, 1), encoded_tgt[i].float())
+                loss_codes = loss_codes + l2Loss(emb, encoded_tgt[i])
                 # print("predict: ", emb.max(), emb.min(), emb.mean())
                 # print("target: ", encoded_tgt[i].max(), encoded_tgt[i].min(), encoded_tgt[i].mean())
 
-            # self.train(is_training)
+            self.train(is_training)
             return loss_codes
         else:
             is_training = self.training
@@ -360,11 +358,16 @@ class EncodecModel(nn.Module):
                 qv = self.quantizer.forward(emb, self.sample_rate, self.bandwidth)
                 # loss_f0 = self.f0_classifier.loss(pred_f0, encoded_f0[i])
                 # loss_uv = self.uv_classifier.loss(pred_uv, encoded_uv[i])
-                loss_emb = l2Loss(emb, encoded_tgt[i])
-                loss_enc = loss_enc + qv.penalty + l2Loss(qv.quantized, emb) ** 2 + loss_emb
+                l2_emb = l2Loss(emb, encoded_tgt[i])
+                qv_quant_loss = l2Loss(qv.quantized, emb) ** 2
+                loss_enc = loss_enc + qv.penalty + qv_quant_loss + l2_emb
+                loss_qv_penalty += qv.penalty
+                loss_qv_quant += qv_quant_loss
+                loss_emb += l2_emb
+
                 codes.append((qv.quantized, scale))
             self.train(is_training)
-            return self.decode(codes)[:, :, :x.shape[-1]], loss_enc, frames, loss_emb
+            return self.decode(codes)[:, :, :x.shape[-1]], loss_enc, frames, loss_qv_penalty, loss_qv_quant, loss_emb
 
     def set_target_bandwidth(self, bandwidth: float):
         if bandwidth not in self.target_bandwidths:
@@ -403,7 +406,7 @@ class EncodecModel(nn.Module):
                    audio_normalize: bool = False,
                    segment: tp.Optional[float] = None,
                    name: str = 'unset'):
-        encoder = m.SEANetEncoder(channels=channels, norm=model_norm, causal=causal)
+        encoder = m.SEANetEncoder_scale(channels=channels, norm=model_norm, causal=causal)
         decoder = m.SEANetDecoder(channels=channels, norm=model_norm, causal=causal)
         n_q = int(1000 * target_bandwidths[-1] // (math.ceil(sample_rate / encoder.hop_length) * 10))  # = 32
         quantizer = qt.ResidualVectorQuantizer(

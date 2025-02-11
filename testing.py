@@ -15,7 +15,7 @@ import torch
 
 from compress import compress, decompress, MODELS
 from utils import save_audio, convert_audio
-from model import EncodecModel, EncodedFrame
+from model_scale import EncodecModel, EncodedFrame
 import struct
 import binary
 import io
@@ -53,20 +53,23 @@ device = 'cpu' # cpu, cuda, ipu, xpu, mkldnn, opengl, opencl, ideep, hip, ve, fp
 # torch.backends.cuda.matmul.allow_tf32 = False
 # torch.backends.cudnn.allow_tf32 = False
 
+np_root = '/data2/xintong/LibriTTS_encodec_continuous/train-clean-100/4267/287369/4267_287369_000038_000000.npy'
 
 song = Path('audio/000002.wav')
 output = Path('audio/output_000002.ecdc')
 outputw = Path('audio/output_000002.wav')
 model_name = 'my_encodec_24khz' # 'encodec_24khz'
-model = MODELS[model_name]("/data2/junchuan/EnCodec_Finetune/news_LibriTTS/batch5_cut50000_epoch90.pth").to(device)
+model = MODELS[model_name]("/data2/junchuan/EnCodec_Finetune/encoder_only+scale/batch5_cut48000_epoch44.pth").to(device)
 
 model.train()
 wav, sr = torchaudio.load(song)
 
 wav = convert_audio(wav, sr, 24000, 1)
 wav = wav[None,:]
-output_wav, _, frames = model.forward(wav)
 
+import pdb
+pdb.set_trace()
+output_wav, _, frames = model.encode(wav, wav, wav, wav, "encoder")
 
 encodes = []
 for emb, scale in frames:

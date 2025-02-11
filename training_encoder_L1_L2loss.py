@@ -1,9 +1,9 @@
 import torch
 import torch.optim as optim
-import customAudioDataset as data
+import customAudioDatasetFull as data
 import os
 import torch.backends.cudnn as cudnn
-os.environ["CUDA_VISIBLE_DEVICES"] = '2'
+os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 from model import EncodecModel 
 from msstftd import MultiScaleSTFTDiscriminator
 from audio_to_mel import Audio2Mel
@@ -64,7 +64,7 @@ def collate_fn(batch):
     uvs = []
     tgts = []
 
-    for waveform, _, f0, uv, tgt in batch:
+    for waveform, _, f0, uv, tgt, path in batch:
         wavs += [waveform]
         f0s += [f0]
         uvs += [uv]

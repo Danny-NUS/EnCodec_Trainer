@@ -52,6 +52,7 @@ def _linear_overlap_add(frames: tp.List[torch.Tensor], stride: int):
         out[..., offset:offset + frame_length] += weight[:frame_length] * frame
         sum_weight[offset:offset + frame_length] += weight[:frame_length]
         offset += stride
+
     assert sum_weight.min() > 0
     return out / sum_weight
 

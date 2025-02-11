@@ -12,7 +12,7 @@ EPSILON = 1e-8
 BATCH_SIZE = 5 #5#55
 TENSOR_CUT = 48000 #10000
 MAX_EPOCH = 10000 # Just set this to a very big number and manually stop it
-SAVE_FOLDER = f'/data2/xintong/EnCodec_Finetune/encoder_only/'
+SAVE_FOLDER = f'/data2/junchuan/EnCodec_Finetune/encoder_only+scale/'
 SAVE_LOCATION = f'{SAVE_FOLDER}batch{BATCH_SIZE}_cut{TENSOR_CUT}_' # appends epoch{epoch}.pth
 
 if not os.path.exists(SAVE_FOLDER):
@@ -117,14 +117,9 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
     optimizer = optim.AdamW([{'params': model.parameters(), 'lr': lr}], betas=(0.8, 0.99))
     optimizer_disc = optim.AdamW([{'params': disc.parameters(), 'lr': lr}], betas=(0.8, 0.99))
 
-
-    other_params = [
-        param for name, param in model.encoder.named_parameters()
-        if name not in ['scale', 'bias']
-    ]
     optimizer_enc = optim.AdamW([
-        {'params': other_params, 'lr': 0.0001},
-        {'params': [model.encoder.scale, model.encoder.bias], 'lr': 0.1}
+        {'params': model.encoder.parameters(), 'lr': 0.0001},
+        # {'params': [model.encoder.scale, model.encoder.bias], 'lr': 0.1}
     ], betas=(0.8, 0.99))
 
 
@@ -144,7 +139,7 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
             model.encoder.zero_grad()
 
             loss_tgt = model(input_wav, f0, uv, tgt, "encoder")
-            # loss_prosody = loss_f0 * 1e-5 + loss_f0 * 1e-2
+            # loss_prosody = los s_f0 * 1e-5 + loss_f0 * 1e-2
 
             loss_tgt.backward()
             optimizer_enc.step()

@@ -3,8 +3,8 @@ import torch.optim as optim
 import customAudioDataset as data
 import os
 import torch.backends.cudnn as cudnn
-os.environ["CUDA_VISIBLE_DEVICES"] = '2'
-from model import EncodecModel 
+os.environ["CUDA_VISIBLE_DEVICES"] = '3'
+from model_scale_grl import EncodecModel 
 from msstftd import MultiScaleSTFTDiscriminator
 from audio_to_mel import Audio2Mel
 
@@ -12,7 +12,7 @@ EPSILON = 1e-8
 BATCH_SIZE = 5 #5#55
 TENSOR_CUT = 48000 #10000
 MAX_EPOCH = 10000 # Just set this to a very big number and manually stop it
-SAVE_FOLDER = f'/data2/xintong/EnCodec_Finetune/encoder_only/'
+SAVE_FOLDER = f'/data2/xintong/EnCodec_Finetune/encoder_only+scale+grl/'
 SAVE_LOCATION = f'{SAVE_FOLDER}batch{BATCH_SIZE}_cut{TENSOR_CUT}_' # appends epoch{epoch}.pth
 
 if not os.path.exists(SAVE_FOLDER):
@@ -64,7 +64,7 @@ def collate_fn(batch):
     uvs = []
     tgts = []
 
-    for waveform, _, f0, uv, tgt in batch:
+    for waveform, _, f0, uv, tgt, path in batch:
         wavs += [waveform]
         f0s += [f0]
         uvs += [uv]
@@ -117,14 +117,9 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
     optimizer = optim.AdamW([{'params': model.parameters(), 'lr': lr}], betas=(0.8, 0.99))
     optimizer_disc = optim.AdamW([{'params': disc.parameters(), 'lr': lr}], betas=(0.8, 0.99))
 
-
-    other_params = [
-        param for name, param in model.encoder.named_parameters()
-        if name not in ['scale', 'bias']
-    ]
     optimizer_enc = optim.AdamW([
-        {'params': other_params, 'lr': 0.0001},
-        {'params': [model.encoder.scale, model.encoder.bias], 'lr': 0.1}
+        {'params': model.encoder.parameters(), 'lr': 0.0001},
+        # {'params': [model.encoder.scale, model.encoder.bias], 'lr': 0.1}
     ], betas=(0.8, 0.99))
 
 
@@ -143,15 +138,15 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
             optimizer_enc.zero_grad()
             model.encoder.zero_grad()
 
-            loss_tgt = model(input_wav, f0, uv, tgt, "encoder")
-            # loss_prosody = loss_f0 * 1e-5 + loss_f0 * 1e-2
+            loss_tgt, loss_emb, loss_f0, loss_uv = model(input_wav, f0, uv, tgt, "encoder")
+            # loss_prosody = los s_f0 * 1e-5 + loss_f0 * 1e-2
 
             loss_tgt.backward()
             optimizer_enc.step()
 
             if batch_idx % log_interval == 0:
                 print(torch.cuda.mem_get_info())
-                print(f"Train Epoch: {epoch} [{batch_idx * len(input_wav)}/{len(trainloader.dataset)} ({100. * batch_idx / len(trainloader):.0f}%)], loss_tgt {loss_tgt.item()}")
+                print(f"Train Epoch: {epoch} [{batch_idx * len(input_wav)}/{len(trainloader.dataset)} ({100. * batch_idx / len(trainloader):.0f}%)], loss_all {loss_tgt.item()}, loss_emb: {loss_emb.item()}, loss_f0: {loss_f0.item()}, loss_uv: {loss_uv.item()}")
     
 
     def train(epoch):
