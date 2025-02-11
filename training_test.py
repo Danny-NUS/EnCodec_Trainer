@@ -3,16 +3,20 @@ import torch.optim as optim
 import customAudioDataset as data
 import os
 import torch.backends.cudnn as cudnn
-os.environ["CUDA_VISIBLE_DEVICES"] = '2'
-from model import EncodecModel 
+# os.environ["CUDA_VISIBLE_DEVICES"] = '2'
+from model_scale import EncodecModel 
 from msstftd import MultiScaleSTFTDiscriminator
 from audio_to_mel import Audio2Mel
+from utils import _check_checksum, _linear_overlap_add, _get_checkpoint_url
+import numpy as np
+
+os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 
 EPSILON = 1e-8
-BATCH_SIZE = 5 #5#55
-TENSOR_CUT = 48000 #10000
+BATCH_SIZE = 1 #5#55
+TENSOR_CUT = 0 #10000
 MAX_EPOCH = 10000 # Just set this to a very big number and manually stop it
-SAVE_FOLDER = f'/data2/junchuan/EnCodec_Finetune/disentangle_stage/'
+SAVE_FOLDER = f'/data2/junchuan/EnCodec_Finetune/encoder_only+scale/'
 SAVE_LOCATION = f'{SAVE_FOLDER}batch{BATCH_SIZE}_cut{TENSOR_CUT}_' # appends epoch{epoch}.pth
 
 if not os.path.exists(SAVE_FOLDER):
@@ -47,7 +51,10 @@ def disc_loss(logits_real, logits_fake):
 
 def pad_sequence(batch, max_len):
     # Make all tensor in a batch the same length by padding with zeros
-    batch = [item.permute(1, 0) for item in batch]
+    if batch[0].dim() == 3:
+        batch = [item.permute(2, 0, 1) for item in batch]
+    else:
+        batch = [item.permute(1, 0) for item in batch]
     batch = torch.nn.utils.rnn.pad_sequence(batch, batch_first=True, padding_value=0.)
     if batch.shape[1] < max_len:
         batch = torch.cat([batch, torch.zeros(max_len - batch.shape[0], *batch.shape[1:], dtype=batch.dtype)])
@@ -59,20 +66,25 @@ def collate_fn(batch):
     wavs = []
     f0s = []
     uvs = []
+    tgts = []
+    audio_list = []
 
-    for waveform, _, f0, uv in batch:
-        wavs += [waveform]
-        f0s += [f0]
-        uvs += [uv]
+    waveform, _, f0, uv, tgt, audio_path = batch[0]
 
     # Group the list of tensors into a batched tensor
-    wavs = pad_sequence(wavs, TENSOR_CUT)
-    f0s = pad_sequence(f0s, int(TENSOR_CUT/40))
-    uvs = pad_sequence(uvs, int(TENSOR_CUT/40))
-    return wavs, f0s, uvs
+    # wavs = pad_sequence(wavs, TENSOR_CUT)
+    # f0s = pad_sequence(f0s, int(TENSOR_CUT/40))
+    # uvs = pad_sequence(uvs, int(TENSOR_CUT/40))
+    # tgts = pad_sequence(tgts, int(TENSOR_CUT/320))
+    # wavs = torch.cat(wavs)
+    # f0s = torch.cat(wavs)
+    # uvs = torch.cat(uvs)
+    # tgts = torch.cat(tgts) # (5,8,150)
+
+    return waveform, f0, uv, tgt, audio_path
 
 
-def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=100000, batch_size=8):
+def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=0, batch_size=1):
     data_path = 'LibriTTS_meta.json'
 
     if fixed_length > 0:
@@ -93,7 +105,7 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
                 causal=False, model_norm='time_group_norm', audio_normalize=True,
                 segment=1., name='my_encodec_24khz')
     model.train()
-    model.train_quantization = True
+    model.train_quantization = False
     model.cuda()
     
     disc = MultiScaleSTFTDiscriminator(filters=32)
@@ -105,32 +117,59 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
     # optimizer = optim.SGD([{'params': model.parameters(), 'lr': lr}], momentum=0.9)
     # optimizer_disc = optim.SGD([{'params': disc.parameters(), 'lr': lr*10}], momentum=0.9)
     
-    optimizer_enc = optim.AdamW([{'params': model.encoder.parameters(), 'lr': lr_enc}], betas=(0.8, 0.99))
+    # optimizer_enc = optim.AdamW([{'params': model.encoder.parameters(), 'lr': lr_enc}], betas=(0.8, 0.99))
     optimizer = optim.AdamW([{'params': model.parameters(), 'lr': lr}], betas=(0.8, 0.99))
     optimizer_disc = optim.AdamW([{'params': disc.parameters(), 'lr': lr}], betas=(0.8, 0.99))
+
+    optimizer_enc = optim.AdamW([
+        {'params': model.encoder.parameters(), 'lr': 0.0001},
+        # {'params': [model.encoder.scale, model.encoder.bias], 'lr': 0.1}
+    ], betas=(0.8, 0.99))
+
 
     def train_classifier(epoch):
         train_d = False
         print('----------------------------------------Epoch: {}----------------------------------------'.format(epoch))
-        for batch_idx, (input_wav, f0, uv) in enumerate(trainloader):
+        for batch_idx, (input_wav, f0, uv, tgt, audio_path) in enumerate(trainloader):
             if torch.all(f0 == 0):
                 continue
             train_d = not train_d
             input_wav = input_wav.cuda()
             f0 = f0.cuda().long()
             uv = uv.cuda().long()
+            tgt = tgt.cuda()
+
             optimizer_enc.zero_grad()
             model.encoder.zero_grad()
-            loss_f0, loss_uv = model(input_wav, f0, uv, "encoder")
-            loss_prosody = loss_f0 * 1e-5 + loss_f0 * 1e-2
 
-            loss_prosody.backward()
-            optimizer.step()
+            embs = model.encode(input_wav.unsqueeze(0), f0.unsqueeze(0), uv.unsqueeze(0), tgt, "encoder")[0]
+
+            target_length = int(24000 / 320)
+            overlap = 0.01
+            target_stride = max(1, int((1 - overlap) * target_length))
+            embs = [emb[0] for emb in embs]
+            for emb in embs:
+                print(emb.max(), emb.min(), emb.mean())
+            embs = _linear_overlap_add(embs, target_stride)
+
+            emb_file = os.path.join("/data2/junchuan/EnCodec_Finetune/samples/scale_bias+params", os.path.basename(audio_path).replace('.wav', '.npy'))
+
+            np.save(emb_file, embs.detach().cpu().numpy()) 
+
+            import pdb
+            pdb.set_trace()
+
+            loss_tgt = model(input_wav, f0, uv, tgt, "encoder")
+            
+            # loss_prosody = los s_f0 * 1e-5 + loss_f0 * 1e-2
+
+            loss_tgt.backward()
+            optimizer_enc.step()
 
             if batch_idx % log_interval == 0:
                 print(torch.cuda.mem_get_info())
-                print(f"Train Epoch: {epoch} [{batch_idx * len(input_wav)}/{len(trainloader.dataset)} ({100. * batch_idx / len(trainloader):.0f}%)], loss {loss_prosody.item()} loss_f0 {loss_f0.item()}, loss_uv {loss_uv.item()}")
-
+                print(f"Train Epoch: {epoch} [{batch_idx * len(input_wav)}/{len(trainloader.dataset)} ({100. * batch_idx / len(trainloader):.0f}%)], loss_tgt {loss_tgt.item()}")
+    
 
     def train(epoch):
         last_loss = 0
@@ -144,13 +183,12 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
             input_wav = input_wav.cuda()
             f0 = f0.cuda().long()
             uv = uv.cuda().long()
+
             optimizer.zero_grad()
             model.zero_grad()
             optimizer_disc.zero_grad()
             disc.zero_grad()
             output, loss_enc, _, loss_f0, loss_uv = model(input_wav, f0, uv, "full")
-
-
 
             logits_real, fmap_real = disc(input_wav)
             if train_d:
@@ -179,25 +217,22 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
                 param_group['lr'] = param_group['lr'] * 0.1
 
 
+    checkpoint_path = "/data2/junchuan/EnCodec_Finetune/encoder only/batch5_cut48000_epoch60.pth"
+    checkpoint = torch.load(checkpoint_path, map_location=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
+    encoder_state_dict = {k.replace("encoder.", ""): v for k, v in checkpoint.items() if k.startswith("encoder.")}
+    load_info = model.encoder.load_state_dict(encoder_state_dict, strict=False)
+    print('Missing keys:', load_info.missing_keys)
+    
+
     for epoch in range(1, max_epoch):
-        if epoch < 100:
-            checkpoint_path = "/data2/junchuan/EnCodec_Finetune/disentangle_stage/batch5_cut48000_epoch4.pth"
-            checkpoint = torch.load(checkpoint_path, map_location=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
-            encoder_state_dict = {k.replace("encoder.", ""): v for k, v in checkpoint.items() if k.startswith("encoder.")}
-            model.encoder.load_state_dict(encoder_state_dict)
-            train_classifier(epoch)
-        elif epoch == 100:
-            checkpoint_path = "/data2/junchuan/EnCodec_Finetune/news_LibriTTS/batch5_cut50000_epoch90.pth"
-            checkpoint = torch.load(checkpoint_path, map_location=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
-            encoder_state_dict = {k.replace("encoder.", ""): v for k, v in checkpoint.items() if k.startswith("encoder.")}
-            decoder_state_dict = {k.replace("decoder.", ""): v for k, v in checkpoint.items() if k.startswith("decoder.")}
-            quantizer_state_dict = {k.replace("quantizer.", ""): v for k, v in checkpoint.items() if k.startswith("quantizer.")}
-            model.encoder.load_state_dict(encoder_state_dict)
-            model.decoder.load_state_dict(decoder_state_dict)
-            model.quantizer.load_state_dict(quantizer_state_dict)
-            train_classifier(epoch)
-        else:
-            train(epoch)
+        # if epoch < 100:
+        train_classifier(epoch)
+        # elif epoch == 100:
+        #     model.decoder.load_state_dict(decoder_state_dict)
+        #     model.quantizer.load_state_dict(quantizer_state_dict)
+        #     train_classifier(epoch)
+        # else:
+        #     train(epoch)
         torch.save(model.state_dict(), f'{SAVE_LOCATION}epoch{epoch}.pth') #epoch{epoch}.pth
         torch.save(disc.state_dict(), f'{SAVE_LOCATION}epoch{epoch}_disc.pth')
 
