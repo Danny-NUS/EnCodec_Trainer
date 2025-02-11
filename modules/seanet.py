@@ -167,7 +167,6 @@ class SEANetEncoder(nn.Module):
         else:
             # print(self.scale, self.bias)
             return self.model(x) * self.scale + self.bias
-            # return self.model(x)
 
 
 class SEANetDecoder(nn.Module):

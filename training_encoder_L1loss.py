@@ -3,8 +3,8 @@ import torch.optim as optim
 import customAudioDataset as data
 import os
 import torch.backends.cudnn as cudnn
-os.environ["CUDA_VISIBLE_DEVICES"] = '2'
-from model import EncodecModel 
+os.environ["CUDA_VISIBLE_DEVICES"] = '1'
+from model_L1loss import EncodecModel 
 from msstftd import MultiScaleSTFTDiscriminator
 from audio_to_mel import Audio2Mel
 
@@ -12,7 +12,7 @@ EPSILON = 1e-8
 BATCH_SIZE = 5 #5#55
 TENSOR_CUT = 48000 #10000
 MAX_EPOCH = 10000 # Just set this to a very big number and manually stop it
-SAVE_FOLDER = f'/data2/xintong/EnCodec_Finetune/encoder_only/'
+SAVE_FOLDER = f'/data2/xintong/EnCodec_Finetune/encoder_L1loss/'
 SAVE_LOCATION = f'{SAVE_FOLDER}batch{BATCH_SIZE}_cut{TENSOR_CUT}_' # appends epoch{epoch}.pth
 
 if not os.path.exists(SAVE_FOLDER):
@@ -84,9 +84,9 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
     data_path = 'LibriTTS_meta.json'
 
     if fixed_length > 0:
-        trainset = data.CustomAudioDataset(data_path, tensor_cut=tensor_cut, fixed_length=fixed_length)
+        trainset = data.CustomAudioDataset(data_path, tensor_cut=tensor_cut, discrete=True, fixed_length=fixed_length)
     else:
-        trainset = data.CustomAudioDataset(data_path, tensor_cut=tensor_cut)
+        trainset = data.CustomAudioDataset(data_path, tensor_cut=tensor_cut, discrete=True)
     
 
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn,)
