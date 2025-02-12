@@ -1,0 +1,18 @@
+Missing keys: ['conv_scale.weight', 'conv_scale.bias', 'fc1.weight', 'fc1.bias', 'fc2.weight', 'fc2.bias', 'conv_out.weight', 'conv_out.bias']
+----------------------------------------Epoch: 1----------------------------------------
+/home/xintong/EnCodec_Trainer/focalloss.py:23: UserWarning: Implicit dimension choice for log_softmax has been deprecated. Change the call to include dim=X as an argument.
+  logpt = F.log_softmax(input)
+(12183797760, 23710007296)
+Train Epoch: 1 [0/33236 (0%)], loss_all 16.390474319458008, loss_f0: 16.300800323486328, loss_uv: 0.08967636525630951
+(11594498048, 23710007296)
+Train Epoch: 1 [500/33236 (2%)], loss_all 16.114288330078125, loss_f0: 16.017349243164062, loss_uv: 0.09693688154220581
+(11594498048, 23710007296)
+Train Epoch: 1 [1000/33236 (3%)], loss_all 14.07939338684082, loss_f0: 13.971735000610352, loss_uv: 0.10765794664621353
+(11594498048, 23710007296)
+Train Epoch: 1 [1500/33236 (5%)], loss_all 13.2097806930542, loss_f0: 13.108087539672852, loss_uv: 0.10169364511966705
+(11594498048, 23710007296)
+Train Epoch: 1 [2000/33236 (6%)], loss_all 13.16038703918457, loss_f0: 13.06732177734375, loss_uv: 0.09306555986404419
+(11594498048, 23710007296)
+Train Epoch: 1 [2500/33236 (8%)], loss_all 12.996472358703613, loss_f0: 12.924966812133789, loss_uv: 0.07150533050298691
+(11594498048, 23710007296)
+Train Epoch: 1 [3000/33236 (9%)], loss_all 13.802726745605469, loss_f0: 13.740541458129883, loss_uv: 0.062185436487197876

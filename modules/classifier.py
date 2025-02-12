@@ -4,9 +4,9 @@ from torch.nn import Dropout, Sequential, Linear, Softmax
 # from model.module_gstloss import STL
 
 
-# class Mish(BaseModule):
-#     def forward(self, x):
-#         return x * torch.tanh(torch.nn.functional.softplus(x))
+class Mish(torch.nn.Module):
+    def forward(self, x):
+        return x * torch.tanh(torch.nn.functional.softplus(x))
     
 def get_trueloss(output_len, loss_matrix):
     loss=0
@@ -68,10 +68,12 @@ class ReversalClassifier(torch.nn.Module):
         self._clipping = gradient_clipping_bounds # 0.25
         self._output_dim = output_dim
         self._classifier = Sequential(
-            Linear(input_dim, hidden_dim),
-            # Mish(),
-            Linear(hidden_dim, output_dim),
-            # torch.nn.Dropout(0.1)
+            # Linear(input_dim, hidden_dim),
+            torch.nn.Conv1d(input_dim, hidden_dim, kernel_size=3, stride=1, padding=1),
+            Mish(),
+            # Linear(hidden_dim, output_dim),
+            torch.nn.Conv1d(hidden_dim, output_dim, kernel_size=3, stride=1, padding=1),
+            torch.nn.Dropout(0.1)
         )
         
         # self._classifier = STL(token_num=output_dim, token_embedding_size=256, num_heads=8, ref_enc_gru_size=128)
@@ -80,9 +82,9 @@ class ReversalClassifier(torch.nn.Module):
         if train_stage != "encoder":
             x = GradientReversalFunction.apply(x, self._lambda, self._clipping)
 
-        x = self._classifier(x)
-        return x
-    
+        x = self._classifier(x.transpose(1, 2))
+        return x.transpose(1, 2)    
+
     @staticmethod
     def loss(prediction, target):
         # ignore_index = -100
