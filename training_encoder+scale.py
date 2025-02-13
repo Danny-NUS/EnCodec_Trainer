@@ -195,11 +195,11 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
                 param_group['lr'] = param_group['lr'] * 0.1
 
 
-    checkpoint_path = "/data2/junchuan/EnCodec_Finetune/news_LibriTTS/batch5_cut50000_epoch90.pth"
-    checkpoint = torch.load(checkpoint_path, map_location=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
-    encoder_state_dict = {k.replace("encoder.", ""): v for k, v in checkpoint.items() if k.startswith("encoder.")}
-    load_info = model.encoder.load_state_dict(encoder_state_dict, strict=False)
-    print('Missing keys:', load_info.missing_keys)
+    # checkpoint_path = "/data2/junchuan/EnCodec_Finetune/news_LibriTTS/batch5_cut50000_epoch90.pth"
+    # checkpoint = torch.load(checkpoint_path, map_location=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
+    # encoder_state_dict = {k.replace("encoder.", ""): v for k, v in checkpoint.items() if k.startswith("encoder.")}
+    # load_info = model.encoder.load_state_dict(encoder_state_dict, strict=False)
+    # print('Missing keys:', load_info.missing_keys)
 
     for epoch in range(1, max_epoch):
         # if epoch < 100:

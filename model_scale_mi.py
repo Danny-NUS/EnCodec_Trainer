@@ -18,30 +18,32 @@ from torch import nn, Tensor
 import quantization as qt
 import modules as m
 from utils import _check_checksum, _linear_overlap_add, _get_checkpoint_url
-from modules.classifier import ReversalClassifier, ReversalClassifier_1, FullTransformerClassifier
-# from focalloss import FocalLoss
+from modules.classifier import ReversalClassifier
+
 ROOT_URL = 'https://dl.fbaipublicfiles.com/encodec/v0/'
 
 EncodedFrame = tp.Tuple[torch.Tensor, tp.Optional[torch.Tensor]]
 
-class FocalLoss(nn.Module):
-    def __init__(self, gamma=2.0, alpha=None):
-        super(FocalLoss, self).__init__()
-        self.gamma = gamma
-        self.alpha = alpha
+class MILoss(nn.Module):
+    def __init__(self, dim_e_f, dim_e_p):
+        super(MILoss, self).__init__()
+        self.mu_layer = nn.Linear(dim_e_f, dim_e_p)
+        self.logvar_layer = nn.Linear(dim_e_f, dim_e_p)
 
-    def forward(self, logits, targets):
-        ce_loss = torch.nn.functional.cross_entropy(logits, targets.squeeze(1), reduction='none')
-        p_t = torch.exp(-ce_loss)
-        focal_loss = (1 - p_t) ** self.gamma * ce_loss
+    def forward(self, e_f, e_p):
+        e_f = e_f.permute(0, 2, 1)
+        e_p = e_p.permute(0, 2, 1)
+        mu = self.mu_layer(e_f)  
+        logvar = self.logvar_layer(e_f)  
 
-        if self.alpha is not None:
-            alpha_factor = self.alpha[targets]
-            focal_loss *= alpha_factor
+        log_p_pos = -0.5 * (logvar + (e_p - mu) ** 2 / torch.exp(logvar))  # positive
+        mi_upper_bound = log_p_pos.mean()
 
-        return focal_loss.mean()
-    
-# fl = FocalLoss(gamma=5)
+        e_p_shuffled = e_p[torch.randperm(e_p.size(0))]  # negative
+        log_p_neg = -0.5 * (logvar + (e_p_shuffled - mu) ** 2 / torch.exp(logvar))
+        mi_upper_bound -= log_p_neg.mean()  
+
+        return mi_upper_bound
 
 class LMModel(nn.Module):
     """Language Model to estimate probabilities of each codebook entry.
@@ -82,14 +84,6 @@ class LMModel(nn.Module):
         out, states, offset = self.transformer(input_, states, offset)
         logits = torch.stack([self.linears[k](out) for k in range(K)], dim=1).permute(0, 3, 1, 2)
         return torch.softmax(logits, dim=1), states, offset
-
-def entropy_regularization(logits):
-    """
-    """
-    probs = torch.nn.functional.softmax(logits, dim=-1)
-    log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
-    entropy = -(probs * log_probs).sum(dim=-1)  # shape: (batch, seq)
-    return entropy.mean()
 
 
 class EncodecModel(nn.Module):
@@ -134,10 +128,11 @@ class EncodecModel(nn.Module):
         self.prosody = segment / 40
         self.target = segment / 320
         self.overlap = overlap
-        self.f0_classifier = ReversalClassifier(input_dim=256, hidden_dim=256, output_dim=256)
-        self.uv_classifier = ReversalClassifier(input_dim=256, hidden_dim=256, output_dim=2)
+        self.f0_classifier = ReversalClassifier(input_dim=256, hidden_dim=384, output_dim=256)
+        self.uv_classifier = ReversalClassifier(input_dim=256, hidden_dim=384, output_dim=2)
         self.frame_rate = math.ceil(self.sample_rate / np.prod(self.encoder.ratios))
         self.name = name
+        self.mi_loss = MILoss(dim_e_f=256, dim_e_p=256)
         
         for param in self.quantizer.parameters():
             param.requires_grad = False
@@ -295,10 +290,13 @@ class EncodecModel(nn.Module):
         # emb = self.encoder(x)
         emb = self.encoder(x, "front") # torch.Size([5, 256, 600])
 
-        # classifier
-        # print(emb.shape)
-        pred_f0 = self.f0_classifier(emb.transpose(1, 2), train_stage="encoder") # torch.Size([5, 600, 256])
-        pred_uv = self.uv_classifier(emb.transpose(1, 2), train_stage="encoder") # torch.Size([5, 600, 2])
+        # # classifier
+        # # print(emb.shape)
+        # pred_f0 = self.f0_classifier(emb.transpose(1, 2), train_stage="encoder") # torch.Size([5, 600, 256])
+        # pred_uv = self.uv_classifier(emb.transpose(1, 2), train_stage="encoder") # torch.Size([5, 600, 2])
+
+        mi_f0 = self.mi_loss(emb, f0_emb)
+        mi_uv = self.mi_loss(emb, uv_emb)
 
         # any problem with scale?
         # print(emb.shape, f0_emb.shape, uv_emb.shape)
@@ -311,7 +309,7 @@ class EncodecModel(nn.Module):
         # emb = self.encoder(x, "full")
 
         if self.training:# or True:
-            return emb, scale, pred_f0, pred_uv
+            return emb, scale, mi_f0, mi_uv
             # return emb, scale
         
         codes = self.quantizer.encode(emb, self.frame_rate, self.bandwidth)
@@ -352,50 +350,36 @@ class EncodecModel(nn.Module):
         self.quantizer.eval()
         l2Loss = torch.nn.MSELoss(reduction='mean')
         # CELoss = torch.nn.CrossEntropyLoss()
-        fl = FocalLoss(gamma=5)
         frames, encoded_f0, encoded_uv, encoded_tgt = self.encode(x, f0, uv, tgt, train_stage)
         loss_enc = torch.tensor([0.0], device=x.device, requires_grad=True)
         codes = []
 
-        loss_f0_sum = 0
-        loss_uv_sum = 0
+        mi_f0_sum = 0
+        mi_uv_sum = 0
         loss_codes = 0
         loss_emb = 0
         if train_stage == "encoder":
             is_training = self.training
-            pred_f0_ = []
-            pred_uv_ = []
-            for i, (emb, scale, pred_f0, pred_uv) in enumerate(frames):
+            for i, (emb, scale, mi_f0, mi_uv) in enumerate(frames):
                 # loss_f0 = self.f0_classifier.loss(pred_f0, encoded_f0[i])
                 # loss_uv = self.uv_classifier.loss(pred_uv, encoded_uv[i])
-                loss_f0 = fl(pred_f0.transpose(1,2).contiguous(), encoded_f0[i].contiguous().long())
-                loss_uv = fl(pred_uv.transpose(1,2).contiguous(), encoded_uv[i].contiguous().long())
-
-                loss_entropy_f0 = entropy_regularization(pred_f0)
-                loss_entropy_uv = entropy_regularization(loss_uv)
-
-                # fl(pred_spk.squeeze(1), spk_id)
-                loss_f0_sum += loss_f0
-                loss_uv_sum += loss_uv
+                mi_f0_sum += mi_f0
+                mi_uv_sum += mi_uv
                 # self.bandwidth = 6
                 # codes = self.quantizer.encode(emb, self.frame_rate, self.bandwidth)
                 # print(qv.min(),)
-                # l2_emb = l2Loss(emb, encoded_tgt[i])
+                l2_emb = l2Loss(emb, encoded_tgt[i])
                 # loss_emb += l2_emb
-                lambda_entropy = 0.1
-                loss_codes = loss_codes + loss_f0 + loss_uv - lambda_entropy * loss_entropy_f0 - lambda_entropy * loss_entropy_uv
+                lambda_mi = 1
+                loss_codes = loss_codes + lambda_mi * (mi_f0 + mi_uv) + l2_emb
                 # print("predict: ", emb.max(), emb.min(), emb.mean())
                 # print("target: ", encoded_tgt[i].max(), encoded_tgt[i].min(), encoded_tgt[i].mean())
-                pred_f0_.append(pred_f0.argmax(dim=-1))
-                pred_uv_.append(pred_f0.argmax(dim=-1))
 
             self.train(is_training)
-            return loss_codes/len(frames), loss_f0_sum/len(frames), loss_uv_sum/len(frames), loss_entropy_f0, loss_entropy_uv, pred_f0_, pred_uv_
+            return loss_codes, mi_f0_sum, mi_uv_sum, l2_emb
         else:
             is_training = self.training
             self.train(self.train_quantization)
-            pred_f0_ = []
-            pred_uv_ = []
             for i, (emb, scale, pred_f0, pred_uv) in enumerate(frames):
                 qv = self.quantizer.forward(emb, self.sample_rate, self.bandwidth)
                 loss_f0 = self.f0_classifier.loss(pred_f0, encoded_f0[i])
@@ -403,10 +387,8 @@ class EncodecModel(nn.Module):
 
                 loss_enc = loss_enc + qv.penalty + l2Loss(qv.quantized, emb) ** 2 + loss_f0 * 1e-6 + loss_uv * 1e-3 + l2Loss(emb, encoded_tgt[i])
                 codes.append((qv.quantized, scale))
-                pred_f0_.append(pred_f0.argmax(dim=-1))
-                pred_uv_.append(pred_uv.argmax(dim=-1))
             self.train(is_training)
-            return self.decode(codes)[:, :, :x.shape[-1]], loss_enc, frames, loss_f0, loss_uv, pred_f0_, pred_uv_
+            return self.decode(codes)[:, :, :x.shape[-1]], loss_enc, frames, loss_f0, loss_uv
 
     def set_target_bandwidth(self, bandwidth: float):
         if bandwidth not in self.target_bandwidths:
@@ -529,7 +511,7 @@ class EncodecModel(nn.Module):
         channels = 1
         model = EncodecModel._get_model(
                 target_bandwidths, sample_rate, channels,
-                causal=False, model_norm='time_group_norm', audio_normalize=False,
+                causal=False, model_norm='time_group_norm', audio_normalize=True,
                 segment=1., name='my_encodec_24khz')
         pre_dic = torch.load(checkpoint_name)
         model.load_state_dict(pre_dic)

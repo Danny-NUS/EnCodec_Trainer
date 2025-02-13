@@ -3,28 +3,20 @@ import torch.optim as optim
 import customAudioDataset as data
 import os
 import torch.backends.cudnn as cudnn
-os.environ["CUDA_VISIBLE_DEVICES"] = '3'
-from model_scale_classifier_fl import EncodecModel 
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+os.environ["CUDA_VISIBLE_DEVICES"] = '2'
+from model_scale_mi import EncodecModel 
 from msstftd import MultiScaleSTFTDiscriminator
 from audio_to_mel import Audio2Mel
-from torch.optim.lr_scheduler import LambdaLR
-
 
 EPSILON = 1e-8
 BATCH_SIZE = 5 #5#55
 TENSOR_CUT = 48000 #10000
 MAX_EPOCH = 10000 # Just set this to a very big number and manually stop it
-SAVE_FOLDER = f'/data2/junchuan/EnCodec_Finetune/stage1/encoder_only+scale_classifier_fl_entropy/'
+SAVE_FOLDER = f'/data2/junchuan/EnCodec_Finetune/encoder_only+mi/'
 SAVE_LOCATION = f'{SAVE_FOLDER}batch{BATCH_SIZE}_cut{TENSOR_CUT}_' # appends epoch{epoch}.pth
 
 if not os.path.exists(SAVE_FOLDER):
    os.makedirs(SAVE_FOLDER)
-
-def lr_lambda(epoch):
-    if epoch < 5:
-        return (epoch + 1) / 5
-    return 0.1
 
 def total_loss(fmap_real, logits_fake, fmap_fake, wav1, wav2, sample_rate=24000):
     relu = torch.nn.ReLU()
@@ -72,7 +64,7 @@ def collate_fn(batch):
     uvs = []
     tgts = []
 
-    for waveform, _, f0, uv, tgt, path in batch:
+    for waveform, _, f0, uv, tgt, audio_path in batch:
         wavs += [waveform]
         f0s += [f0]
         uvs += [uv]
@@ -104,13 +96,9 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
     target_bandwidths = [1.5, 3., 6, 12., 24.]
     sample_rate = 24_000
     channels = 1
-    # model = EncodecModel._get_model(
-    #             target_bandwidths, sample_rate, channels,
-    #             causal=False, model_norm='time_group_norm', audio_normalize=True,
-    #             segment=1., name='my_encodec_24khz')
     model = EncodecModel._get_model(
                 target_bandwidths, sample_rate, channels,
-                causal=False, model_norm='none', audio_normalize=True,
+                causal=False, model_norm='time_group_norm', audio_normalize=True,
                 segment=1., name='my_encodec_24khz')
     model.train()
     model.train_quantization = False
@@ -120,28 +108,26 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
     disc.train()
     disc.cuda()
 
-    lr_enc = 0.0002
-    lr = 0.002
+    lr_enc = 0.001
+    lr = 0.00001
     # optimizer = optim.SGD([{'params': model.parameters(), 'lr': lr}], momentum=0.9)
     # optimizer_disc = optim.SGD([{'params': disc.parameters(), 'lr': lr*10}], momentum=0.9)
     
     # optimizer_enc = optim.AdamW([{'params': model.encoder.parameters(), 'lr': lr_enc}], betas=(0.8, 0.99))
+
     # optimizer = optim.AdamW([{'params': model.parameters(), 'lr': lr}], betas=(0.8, 0.99))
     # optimizer_disc = optim.AdamW([{'params': disc.parameters(), 'lr': lr}], betas=(0.8, 0.99))
 
     optimizer_enc = optim.AdamW([
-        {'params': model.encoder.parameters(), 'lr': 0.002},
+        {'params': model.encoder.parameters(), 'lr': lr_enc},
         # {'params': [model.encoder.scale, model.encoder.bias], 'lr': 0.1}
     ], betas=(0.8, 0.99))
 
-    # optimizer_enc = optim.Adam(model.encoder.parameters(), lr=lr_enc)
 
-
-    def train_classifier(epoch, steps):
+    def train_encoder(epoch):
         train_d = False
         print('----------------------------------------Epoch: {}----------------------------------------'.format(epoch))
         for batch_idx, (input_wav, f0, uv, tgt) in enumerate(trainloader):
-            steps = steps+1
             if torch.all(f0 == 0):
                 continue
             train_d = not train_d
@@ -153,62 +139,55 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
             optimizer_enc.zero_grad()
             model.encoder.zero_grad()
 
-            loss_tgt, loss_f0, loss_uv, loss_entropy_f0, loss_entropy_uv, pred_f0, pred_uv = model(input_wav, f0, uv, tgt, "encoder")
-
-            # if steps > 600:
-            #     import pdb
-            #     pdb.set_trace()
+            loss_tgt, mi_f0_sum, mi_uv_sum, l2_emb = model(input_wav, f0, uv, tgt, "encoder")
             # loss_prosody = los s_f0 * 1e-5 + loss_f0 * 1e-2
-            # scheduler.step(loss_tgt)
-            # print(scheduler.optimizer.param_groups[0]['lr'])
+
             loss_tgt.backward()
             optimizer_enc.step()
 
             if batch_idx % log_interval == 0:
                 print(torch.cuda.mem_get_info())
-                print(f"Train Epoch: {epoch} [{batch_idx * len(input_wav)}/{len(trainloader.dataset)} ({100. * batch_idx / len(trainloader):.0f}%)], loss_all {loss_tgt.item()}, loss_entropy_f0: {loss_entropy_f0.item()}, loss_entropy_uv: {loss_entropy_uv.item()}, loss_f0: {loss_f0.item()}, loss_uv: {loss_uv.item()}")
+                print(f"Train Epoch: {epoch} [{batch_idx * len(input_wav)}/{len(trainloader.dataset)} ({100. * batch_idx / len(trainloader):.0f}%)], loss_tgt {loss_tgt.item()}, l2_emb {l2_emb.item()}, mi_f0_sum {mi_f0_sum.item()}, mi_uv_sum {mi_uv_sum.item()}")
     
 
-    def train(epoch):
-        last_loss = 0
-        train_d = False
-        print('----------------------------------------Epoch: {}----------------------------------------'.format(epoch))
+    # def train(epoch):
+    #     last_loss = 0
+    #     train_d = False
+    #     print('----------------------------------------Epoch: {}----------------------------------------'.format(epoch))
 
-        for batch_idx, (input_wav, f0, uv) in enumerate(trainloader):
-            if torch.all(f0 == 0):
-                continue
-            train_d = not train_d
-            input_wav = input_wav.cuda()
-            f0 = f0.cuda().long()
-            uv = uv.cuda().long()
+    #     for batch_idx, (input_wav, f0, uv) in enumerate(trainloader):
+    #         if torch.all(f0 == 0):
+    #             continue
+    #         train_d = not train_d
+    #         input_wav = input_wav.cuda()
+    #         f0 = f0.cuda().long()
+    #         uv = uv.cuda().long()
 
-            optimizer.zero_grad()
-            model.zero_grad()
-            # optimizer_disc.zero_grad()
-            disc.zero_grad()
-            output, loss_enc, _, loss_f0, loss_uv = model(input_wav, f0, uv, "full")
+    #         optimizer.zero_grad()
+    #         model.zero_grad()
+    #         optimizer_disc.zero_grad()
+    #         disc.zero_grad()
+    #         output, loss_enc, _, loss_f0, loss_uv = model(input_wav, f0, uv, "full")
 
-            # logits_real, fmap_real = disc(input_wav)
-            # if train_d:
-            #     logits_fake, _ = disc(model(input_wav, f0, uv)[0].detach())
-            #     loss = disc_loss(logits_real, logits_fake)
-            #     if loss > last_loss/2:
-            #         loss.backward()
-            #         # optimizer_disc.step()
-            #     last_loss = 0
+    #         logits_real, fmap_real = disc(input_wav)
+    #         if train_d:
+    #             logits_fake, _ = disc(model(input_wav, f0, uv)[0].detach())
+    #             loss = disc_loss(logits_real, logits_fake)
+    #             if loss > last_loss/2:
+    #                 loss.backward()
+    #                 optimizer_disc.step()
+    #             last_loss = 0
 
-            # logits_fake, fmap_fake = disc(output)
-            # loss = total_loss(fmap_real, logits_fake, fmap_fake, input_wav, output)
-            # last_loss = last_loss + loss.item()
+    #         logits_fake, fmap_fake = disc(output)
+    #         loss = total_loss(fmap_real, logits_fake, fmap_fake, input_wav, output)
+    #         last_loss = last_loss + loss.item()
+    #         loss_enc.backward(retain_graph=True)
+    #         loss.backward()
+    #         optimizer.step()
 
-            # lr = scheduler.step(last_loss)
-
-            loss_enc.backward(retain_graph=True)
-            optimizer.step()
-
-            if batch_idx % log_interval == 0:
-                print(torch.cuda.mem_get_info())
-                print(f"Train Epoch: {epoch} [{batch_idx * len(input_wav)}/{len(trainloader.dataset)} ({100. * batch_idx / len(trainloader):.0f}%)], loss_enc: {loss_enc.item()}, loss {loss.item()} loss_f0 {loss_f0.item()}, loss_uv {loss_uv.item()}")
+    #         if batch_idx % log_interval == 0:
+    #             print(torch.cuda.mem_get_info())
+    #             print(f"Train Epoch: {epoch} [{batch_idx * len(input_wav)}/{len(trainloader.dataset)} ({100. * batch_idx / len(trainloader):.0f}%)], loss_enc: {loss_enc.item()}, loss {loss.item()} loss_f0 {loss_f0.item()}, loss_uv {loss_uv.item()}")
 
 
     def adjust_learning_rate(optimizer, epoch):
@@ -217,18 +196,15 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
                 param_group['lr'] = param_group['lr'] * 0.1
 
 
-    # checkpoint_path = "/data2/junchuan/EnCodec_Finetune/news_LibriTTS/batch5_cut50000_epoch90.pth"
-    # checkpoint = torch.load(checkpoint_path, map_location=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
-    # encoder_state_dict = {k.replace("encoder.", ""): v for k, v in checkpoint.items() if k.startswith("encoder.")}
-    # load_info = model.encoder.load_state_dict(encoder_state_dict, strict=False)
-    # print('Missing keys:', load_info.missing_keys)
+    checkpoint_path = "/data2/junchuan/EnCodec_Finetune/news_LibriTTS/batch5_cut50000_epoch90.pth"
+    checkpoint = torch.load(checkpoint_path, map_location=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
+    encoder_state_dict = {k.replace("encoder.", ""): v for k, v in checkpoint.items() if k.startswith("encoder.")}
+    load_info = model.encoder.load_state_dict(encoder_state_dict, strict=False)
+    print('Missing keys:', load_info.missing_keys)
 
-    # scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, threshold=0.1)
-
-    steps = 0
     for epoch in range(1, max_epoch):
         # if epoch < 100:
-        train_classifier(epoch, steps)
+        train_encoder(epoch)
         # elif epoch == 100:
         #     model.decoder.load_state_dict(decoder_state_dict)
         #     model.quantizer.load_state_dict(quantizer_state_dict)
@@ -237,10 +213,9 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
         #     train(epoch)
         torch.save(model.state_dict(), f'{SAVE_LOCATION}epoch{epoch}.pth') #epoch{epoch}.pth
         torch.save(disc.state_dict(), f'{SAVE_LOCATION}epoch{epoch}_disc.pth')
-        # scheduler = LambdaLR(optimizer, lr_lambda)
 
-        # adjust_learning_rate(optimizer, epoch)
-        # adjust_learning_rate(optimizer_disc, epoch)
+        adjust_learning_rate(optimizer, epoch)
+        adjust_learning_rate(optimizer_disc, epoch)
 
 training(max_epoch=MAX_EPOCH, log_interval=100, fixed_length=0, batch_size=BATCH_SIZE, tensor_cut=TENSOR_CUT)
 

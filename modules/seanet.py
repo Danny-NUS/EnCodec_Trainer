@@ -249,7 +249,7 @@ class SEANetEncoder_scale(nn.Module):
         self.model = nn.Sequential(*model)
 
         self.conv_scale = nn.Conv1d(128, 64, kernel_size=3, stride=1, padding=1)  # Reduce channels
-        self.pool_scale = nn.AdaptiveAvgPool1d(1)  # Pool over seq_length
+        # self.pool_scale = nn.AdaptiveAvgPool1d(1)  # Pool over seq_length
         self.fc1 = nn.Linear(64, 1) 
         self.fc2 = nn.Linear(64, 1) 
 
@@ -271,10 +271,11 @@ class SEANetEncoder_scale(nn.Module):
                 if i > 11:
                     x = layer(x)
                     # print(f"{i}: {y.shape}")
-            y = self.pool_scale(self.conv_scale(x)).squeeze(-1)
+            y = self.conv_scale(x).squeeze(-1)
+            y = y.permute(0, 2, 1)
             scale = F.softplus(self.fc1(y)) + 1
             bias = self.fc2(y)
-            out = self.conv_out(x * scale.view(-1, 1, 1) + bias.view(-1, 1, 1))
+            out = self.conv_out(x * scale.permute(0, 2, 1) + bias.permute(0, 2, 1))
             return out
         
         else:
@@ -283,7 +284,10 @@ class SEANetEncoder_scale(nn.Module):
         
             x = self.model(x)
 
-            y = self.pool_scale(self.conv_scale(x)).squeeze(-1)
+            import pdb
+            pdb.set_trace()
+
+            y = self.conv_scale(x).squeeze(-1)
             scale = F.softplus(self.fc1(y)) + 1
             bias = self.fc2(y)
             out = self.conv_out(x * scale.view(-1, 1, 1) + bias.view(-1, 1, 1))

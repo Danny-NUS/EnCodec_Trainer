@@ -119,6 +119,80 @@ class ReversalClassifier(torch.nn.Module):
         return loss # prediction: (b,1,2), target: (b,1) 
         # losses['lang_class'] *= hp.reversal_classifier_w / (hp.num_mels + 2) # ~ 0.0015
 
+
+import torch
+import torch.nn as nn
+
+class FullTransformerClassifier(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim, num_heads=8, num_layers=6, dropout=0.1, max_len=1000):
+        super(FullTransformerClassifier, self).__init__()
+
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.output_dim = output_dim
+
+        self.positional_encoding = nn.Parameter(torch.zeros(1, max_len, input_dim))
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=input_dim, 
+            nhead=num_heads, 
+            dim_feedforward=hidden_dim, 
+            dropout=dropout,
+            batch_first=True
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        self.fc = nn.Linear(input_dim, output_dim)
+
+    def forward(self, src, train_stage="full"):
+        """
+        src: (batch_size, seq_length, input_dim)
+        out: (batch_size, seq_length, output_dim)
+        """
+
+        src = src + self.positional_encoding[:, :src.size(1), :]
+
+        encoded = self.encoder(src)
+
+        output = self.fc(encoded)
+
+        return output
+    
+
+class ReversalClassifier_1(torch.nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super(ReversalClassifier_1, self).__init__()
+
+        self._classifier = torch.nn.Sequential(
+            torch.nn.Conv1d(input_dim, output_dim, kernel_size=3, stride=1, padding=1),
+            torch.nn.ReLU(),
+            # torch.nn.BatchNorm1d(output_dim),
+
+            # torch.nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, stride=1, padding=1),
+            # torch.nn.BatchNorm1d(hidden_dim),
+            # torch.nn.ReLU(),
+
+            # torch.nn.Conv1d(hidden_dim, output_dim, kernel_size=3, stride=1, padding=1),
+            # torch.nn.BatchNorm1d(output_dim),
+            # torch.nn.ReLU(),
+
+            torch.nn.Dropout(0.2)
+        )
+
+        self.fc = torch.nn.Linear(output_dim, output_dim)
+
+    def forward(self, x, train_stage="full"):
+        x = x.transpose(1, 2)
+        if train_stage != "encoder":
+            x = GradientReversalFunction.apply(x, self._lambda, self._clipping)
+        x = self._classifier(x)
+        # x = x.mean(dim=2)
+        x = x.transpose(1, 2)
+        x = self.fc(x)
+        # import pdb
+        # pdb.set_trace()
+        return x
+
 class CosineSimilarityClassifier(torch.nn.Module):
     """Cosine similarity-based adversarial classifier.
     
