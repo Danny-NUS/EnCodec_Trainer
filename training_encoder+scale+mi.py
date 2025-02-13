@@ -191,7 +191,7 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
 
 
     def adjust_learning_rate(optimizer, epoch):
-        if epoch % 80 == 0:
+        if epoch % 10 == 0:
             for param_group in optimizer.param_groups:
                 param_group['lr'] = param_group['lr'] * 0.1
 
@@ -214,8 +214,8 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
         torch.save(model.state_dict(), f'{SAVE_LOCATION}epoch{epoch}.pth') #epoch{epoch}.pth
         torch.save(disc.state_dict(), f'{SAVE_LOCATION}epoch{epoch}_disc.pth')
 
-        adjust_learning_rate(optimizer, epoch)
-        adjust_learning_rate(optimizer_disc, epoch)
+        adjust_learning_rate(optimizer_enc, epoch)
+        # adjust_learning_rate(optimizer_disc, epoch)
 
 training(max_epoch=MAX_EPOCH, log_interval=100, fixed_length=0, batch_size=BATCH_SIZE, tensor_cut=TENSOR_CUT)
 

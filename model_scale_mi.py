@@ -43,7 +43,10 @@ class MILoss(nn.Module):
         log_p_neg = -0.5 * (logvar + (e_p_shuffled - mu) ** 2 / torch.exp(logvar))
         mi_upper_bound -= log_p_neg.mean()  
 
-        return mi_upper_bound
+
+        mi_value = max(mi_upper_bound, -50)
+
+        return mi_value
 
 class LMModel(nn.Module):
     """Language Model to estimate probabilities of each codebook entry.
@@ -370,7 +373,7 @@ class EncodecModel(nn.Module):
                 # print(qv.min(),)
                 l2_emb = l2Loss(emb, encoded_tgt[i])
                 # loss_emb += l2_emb
-                lambda_mi = 1
+                lambda_mi = 0.1
                 loss_codes = loss_codes + lambda_mi * (mi_f0 + mi_uv) + l2_emb
                 # print("predict: ", emb.max(), emb.min(), emb.mean())
                 # print("target: ", encoded_tgt[i].max(), encoded_tgt[i].min(), encoded_tgt[i].mean())
