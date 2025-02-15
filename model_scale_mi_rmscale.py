@@ -24,6 +24,26 @@ ROOT_URL = 'https://dl.fbaipublicfiles.com/encodec/v0/'
 
 EncodedFrame = tp.Tuple[torch.Tensor, tp.Optional[torch.Tensor]]
 
+class MILoss(nn.Module):
+    def __init__(self, dim_e_f, dim_e_p):
+        super(MILoss, self).__init__()
+        self.mu_layer = nn.Linear(dim_e_f, dim_e_p)
+        self.logvar_layer = nn.Linear(dim_e_f, dim_e_p)
+
+    def forward(self, e_f, e_p):
+        e_f = e_f.permute(0, 2, 1)
+        e_p = e_p.permute(0, 2, 1)
+        mu = self.mu_layer(e_f)  
+        logvar = self.logvar_layer(e_f)  
+
+        log_p_pos = -0.5 * (logvar + (e_p - mu) ** 2 / torch.exp(logvar))  # positive
+        mi_upper_bound = log_p_pos.mean()
+
+        e_p_shuffled = e_p[torch.randperm(e_p.size(0))]  # negative
+        log_p_neg = -0.5 * (logvar + (e_p_shuffled - mu) ** 2 / torch.exp(logvar))
+        mi_upper_bound -= log_p_neg.mean()  
+
+        return mi_upper_bound
 
 class LMModel(nn.Module):
     """Language Model to estimate probabilities of each codebook entry.
@@ -80,7 +100,7 @@ class EncodecModel(nn.Module):
         name (str): name of the model, used as metadata when compressing audio.
     """
     def __init__(self,
-                 encoder: m.SEANetEncoder_scale,
+                 encoder: m.SEANetEncoder,
                  decoder: m.SEANetDecoder,
                  quantizer: qt.ResidualVectorQuantizer,
                  target_bandwidths: tp.List[float],
@@ -112,6 +132,7 @@ class EncodecModel(nn.Module):
         self.uv_classifier = ReversalClassifier(input_dim=256, hidden_dim=384, output_dim=2)
         self.frame_rate = math.ceil(self.sample_rate / np.prod(self.encoder.ratios))
         self.name = name
+        self.mi_loss = MILoss(dim_e_f=256, dim_e_p=256)
         
         for param in self.quantizer.parameters():
             param.requires_grad = False
@@ -269,10 +290,13 @@ class EncodecModel(nn.Module):
         # emb = self.encoder(x)
         emb = self.encoder(x, "front") # torch.Size([5, 256, 600])
 
-        # classifier
-        # print(emb.shape)
-        pred_f0 = self.f0_classifier(emb.transpose(1, 2), train_stage="full") # torch.Size([5, 600, 256])
-        pred_uv = self.uv_classifier(emb.transpose(1, 2), train_stage="full") # torch.Size([5, 600, 2])
+        # # classifier
+        # # print(emb.shape)
+        # pred_f0 = self.f0_classifier(emb.transpose(1, 2), train_stage="encoder") # torch.Size([5, 600, 256])
+        # pred_uv = self.uv_classifier(emb.transpose(1, 2), train_stage="encoder") # torch.Size([5, 600, 2])
+
+        mi_f0 = self.mi_loss(emb, f0_emb)
+        mi_uv = self.mi_loss(emb, uv_emb)
 
         # any problem with scale?
         # print(emb.shape, f0_emb.shape, uv_emb.shape)
@@ -285,7 +309,7 @@ class EncodecModel(nn.Module):
         # emb = self.encoder(x, "full")
 
         if self.training:# or True:
-            return emb, scale, pred_f0, pred_uv
+            return emb, scale, mi_f0, mi_uv
             # return emb, scale
         
         codes = self.quantizer.encode(emb, self.frame_rate, self.bandwidth)
@@ -330,28 +354,29 @@ class EncodecModel(nn.Module):
         loss_enc = torch.tensor([0.0], device=x.device, requires_grad=True)
         codes = []
 
-        loss_f0_sum = 0
-        loss_uv_sum = 0
+        mi_f0_sum = 0
+        mi_uv_sum = 0
         loss_codes = 0
         loss_emb = 0
         if train_stage == "encoder":
             is_training = self.training
-            for i, (emb, scale, pred_f0, pred_uv) in enumerate(frames):
-                loss_f0 = self.f0_classifier.loss(pred_f0, encoded_f0[i])
-                loss_uv = self.uv_classifier.loss(pred_uv, encoded_uv[i])
-                loss_f0_sum += loss_f0
-                loss_uv_sum += loss_uv
+            for i, (emb, scale, mi_f0, mi_uv) in enumerate(frames):
+                # loss_f0 = self.f0_classifier.loss(pred_f0, encoded_f0[i])
+                # loss_uv = self.uv_classifier.loss(pred_uv, encoded_uv[i])
+                mi_f0_sum += mi_f0
+                mi_uv_sum += mi_uv
                 # self.bandwidth = 6
                 # codes = self.quantizer.encode(emb, self.frame_rate, self.bandwidth)
                 # print(qv.min(),)
                 l2_emb = l2Loss(emb, encoded_tgt[i])
-                loss_emb += l2_emb
-                loss_codes = loss_codes + l2_emb + loss_f0 * 1e-6 + loss_uv * 1e-3
+                # loss_emb += l2_emb
+                lambda_mi = 1
+                loss_codes = loss_codes + lambda_mi * (mi_f0 + mi_uv) + l2_emb
                 # print("predict: ", emb.max(), emb.min(), emb.mean())
                 # print("target: ", encoded_tgt[i].max(), encoded_tgt[i].min(), encoded_tgt[i].mean())
 
             self.train(is_training)
-            return loss_codes, loss_emb, loss_f0, loss_uv
+            return loss_codes, mi_f0_sum, mi_uv_sum, l2_emb
         else:
             is_training = self.training
             self.train(self.train_quantization)
@@ -402,7 +427,7 @@ class EncodecModel(nn.Module):
                    audio_normalize: bool = False,
                    segment: tp.Optional[float] = None,
                    name: str = 'unset'):
-        encoder = m.SEANetEncoder_scale(channels=channels, norm=model_norm, causal=causal)
+        encoder = m.SEANetEncoder(channels=channels, norm=model_norm, causal=causal)
         decoder = m.SEANetDecoder(channels=channels, norm=model_norm, causal=causal)
         n_q = int(1000 * target_bandwidths[-1] // (math.ceil(sample_rate / encoder.hop_length) * 10))  # = 32
         quantizer = qt.ResidualVectorQuantizer(

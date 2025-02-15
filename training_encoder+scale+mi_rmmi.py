@@ -4,7 +4,7 @@ import customAudioDataset as data
 import os
 import torch.backends.cudnn as cudnn
 os.environ["CUDA_VISIBLE_DEVICES"] = '1'
-from model_scale_mi import EncodecModel 
+from model_scale_mi_rmmi import EncodecModel 
 from msstftd import MultiScaleSTFTDiscriminator
 from audio_to_mel import Audio2Mel
 
@@ -12,7 +12,7 @@ EPSILON = 1e-8
 BATCH_SIZE = 5 #5#55
 TENSOR_CUT = 48000 #10000
 MAX_EPOCH = 10000 # Just set this to a very big number and manually stop it
-SAVE_FOLDER = f'/data2/xintong/EnCodec_Finetune/encoder_only+mi/'
+SAVE_FOLDER = f'/data2/xintong/EnCodec_Finetune/encoder_only+mi_rmmi/'
 SAVE_LOCATION = f'{SAVE_FOLDER}batch{BATCH_SIZE}_cut{TENSOR_CUT}_' # appends epoch{epoch}.pth
 
 if not os.path.exists(SAVE_FOLDER):
@@ -214,8 +214,8 @@ def training(max_epoch = 5, log_interval = 20, fixed_length = 0, tensor_cut=1000
         torch.save(model.state_dict(), f'{SAVE_LOCATION}epoch{epoch}.pth') #epoch{epoch}.pth
         torch.save(disc.state_dict(), f'{SAVE_LOCATION}epoch{epoch}_disc.pth')
 
-        adjust_learning_rate(optimizer, epoch)
-        adjust_learning_rate(optimizer_disc, epoch)
+        adjust_learning_rate(optimizer_enc, epoch)
+        #adjust_learning_rate(optimizer_disc, epoch)
 
 training(max_epoch=MAX_EPOCH, log_interval=100, fixed_length=0, batch_size=BATCH_SIZE, tensor_cut=TENSOR_CUT)
 
